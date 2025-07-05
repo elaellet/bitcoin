@@ -1,0 +1,19 @@
+
+## Dataset: bitcoin_274_raw.csv
+- **Frozen Date**: 2025-06-22 00:53:00
+- **Time Range**: 2012-01-01 10:01:00 tp 2025-06-22 00:53:00
+- **Dimensions**: 7,084,533 rows x 6 columns
+- **Columns**:
+  - `Timestamp` (float64)
+  - `Open` (float64)
+  - `High` (float64)
+  - `Low` (float64)
+  - `Close` (float64)
+  - `Volume` (float64)
+- **Key Variables**:
+  - Open/High/Low/Close prices
+  - Volume (BTC/USD)
+  - Timestamp (Unix epoch)
+- **Source Path**: /content/drive/MyDrive/datasets/bitcoin/versions/ohlcv_274.csv
+- **Original Source**: [Kaggle API](https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data)
+- **Checksum (SHA-256)**: 2b04e4c6df4328017d586a2972e243a83b06e23144d558c92295e905837788bb

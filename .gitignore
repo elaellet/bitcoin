@@ -1,0 +1,11 @@
+# Data and local configs
+data/raw/
+data/processed/
+data/cleaned/
+*.ipynb_checkpoints/
+__pycache__/
+*.pyc
+*.pkl
+*.csv
+.DS_Store
+.env
