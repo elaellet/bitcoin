@@ -17,13 +17,14 @@ def load_proc_dataset():
 
   return dataset
 
-def load_cleaned_dataset(CSV_CLEANED):
-  dataset = pd.read_csv(CSV_CLEANED)
-  dataset = dataset.set_index('date')
+def load_cleaned_dataset():
+  dataset = pd.read_csv(CSV_CLEANED,
+                        index_col='date',
+                        parse_dates=['date'])
 
   return dataset
 
-# Resampling and aggregation smooths out high-frequency noise and reveals underlying trends.
+# Resampling and aggregating smooths out high-frequency noise and reveals underlying trends.
 def resample_and_aggregate_dataset(dataset):
   ohlcv_agg = {
     'open': 'first', # First price of a timeframe
