@@ -1,46 +1,31 @@
 import pandas as pd
-from pathlib import Path
 
-PROJECT_DATA = Path('/content/drive/MyDrive/projects/bitcoin/data')
-CSV_RAW = PROJECT_DATA / 'raw/bitcoin_274_raw.csv'
-CSV_PROC = PROJECT_DATA / 'processed/bitcoin_274_proc.csv'
-CSV_CLEANED = PROJECT_DATA / 'cleaned/bitcoin_274_cleaned.csv'
+def load_btc_dataset(path, index_col=None, parse_dates=False):
+    '''
+    Loads a BTC dataset from a specified CSV file path into a Pandas DataFrame.
+     
+    Args:
+        path (Path): The path to the CSV file.
+        index_col (str, optional): The column to set as the DataFrame index. Defaults to None.
+        parse_dates (bool, optional): Whether to parse the index column as dates. Defaults to False.
 
+    Returns:
+        pd.DataFrame: The loaded dataset.
 
-def load_raw_dataset():
-  return pd.read_csv(CSV_RAW)
+    Raises:
+        FileNotFoundError: If the file does not exist at the given path.        
+    '''
+    if not path.is_file():
+        raise FileNotFoundError(f'Error: The file was not found at {path}')
+    
+    print(f'Loading dataset from: {path.name}...')
 
-def load_proc_dataset():
-  dataset = pd.read_csv(CSV_PROC,
-                        index_col='date',
-                        parse_dates=['date'])
+    read_args = dict()
+    if index_col:
+        read_args['index_col'] = index_col # Set index to unique timestamps.
+    if parse_dates:
+        read_args['parse_dates'] = [index_col] if index_col else True # Force datetime parsing(e.g., DatetimeIndex for asfreq()).
 
-  return dataset
+    print('Dataset loaded successfully.')
 
-def load_cleaned_dataset():
-  dataset = pd.read_csv(CSV_CLEANED,
-                        index_col='date',
-                        parse_dates=['date'])
-
-  return dataset
-
-# Resampling and aggregating smooths out high-frequency noise and reveals underlying trends.
-def resample_and_aggregate_dataset(dataset):
-  ohlcv_agg = {
-    'open': 'first', # First price of a timeframe
-    'high': 'max',   # A timeframe high
-    'low': 'min',    # A timeframe low
-    'close': 'last', # Last price of a timeframe
-    'volume': 'sum'  # Total timeframe trading volume
-  }
-
-  timeframes = {'hourly': 'h', 'daily': 'D', 'weekly': 'W', 'monthly': 'ME'}
-
-  dataset_ohlcv = {}
-
-  for period, freq in timeframes.items():
-    resampled_df = dataset.resample(freq).agg(ohlcv_agg)
-    # Drop rows with no data, which can occur in empty time periods.
-    dataset_ohlcv[period] = resampled_df.dropna()
-
-  return dataset_ohlcv
+    return pd.read_csv(path, **read_args)

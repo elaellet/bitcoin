@@ -1,9 +1,15 @@
-def split_dataset(dataset, train_size=0.8, valid_size=0.1):
-    train_idx = int(len(dataset) * train_size)
-    valid_idx = int(len(dataset) * valid_size)
+from .utils import print_header
 
-    train_set = dataset.iloc[: train_idx]
-    valid_set = dataset.iloc[train_idx : train_idx + valid_idx]
-    test_set = dataset.iloc[train_idx + valid_idx: ]
+def split_df(df, train_size=0.8, valid_size=0.1):
+    print('\n--- Splitting BTC Dataset to Training, Validation, and Test Set ---')
 
-    return train_set, valid_set, test_set
+    train_index = int(len(df) * train_size)
+    valid_index = int(len(df) * valid_size)
+
+    df_train = df.iloc[: train_index]
+    df_valid = df.iloc[train_index : train_index + valid_index]
+    df_test = df.iloc[train_index + valid_index: ]
+
+    print('--- BTC Dataset Splitting Complete ---')
+
+    return df_train, df_valid, df_test
