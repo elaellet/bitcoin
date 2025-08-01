@@ -1,11 +1,12 @@
-import pandas as pd
+import hashlib
 import shutil
 from pathlib import Path
 
-import hashlib
-import pickle
+import pandas as pd
+#import pickle
 
-from google.colab import files
+# TODO: How to disable during executable file creation?
+#from google.colab import files
 
 def print_header(title):
     '''
@@ -21,7 +22,7 @@ def print_header(title):
 
 def compute_sha256(path):
     '''
-    Computes the SHA256 checksum of a file.
+    Computes the SHA256 hash of a file.
 
     This function reads the file in binary chunks, making it memory-efficient
     for files of any size.
@@ -32,7 +33,7 @@ def compute_sha256(path):
     Returns:
         str: The hexadecimal representation of the computed SHA256 hash, None if the file was not found.   
     '''
-    print(f'\nCalculating checksum for: {path.name}...')
+    print(f'\nCalculating hash for: {path.name}...')
 
     path = Path(path)
     sha256_hash = hashlib.sha256()
@@ -43,7 +44,7 @@ def compute_sha256(path):
             while chunk := f.read(chunk_size):
                 sha256_hash.update(chunk)
 
-        print('Checksum computed successfully.')
+        print('Hash computed successfully.')
         return sha256_hash.hexdigest()
     
     except FileNotFoundError:
@@ -52,26 +53,26 @@ def compute_sha256(path):
     
 def validate_sha256(path):
     '''
-    Validates a file's integrity by comparing its SHA256 checksum against a known value.
+    Validates a file's integrity by comparing its SHA256 hash against a known value.
 
     Args:
         path (str or pathlib.Path): The path to the file to validate.
 
     Returns:
-        bool: True if the checksums match, False otherwise.
+        bool: True if the hashes match, False otherwise.
     '''
     path = Path(path)
     ACTUAL_HASH = '2b04e4c6df4328017d586a2972e243a83b06e23144d558c92295e905837788bb'
     computed_hash = compute_sha256(path)
 
-    print(f'\nValidating checksums for: {path.name}...')
+    print(f'\nValidating hashes for: {path.name}...')
   
     if computed_hash == ACTUAL_HASH:
         print('Data integrity check passed.')
         return True
     else:
         print('--- !!! DATA VALIDATION FAILED !!! ---')
-        print(f'Error: Checksums mismatch for {path.name}. The file may be corrupt or modified.')
+        print(f'Error: Hashes mismatch for {path.name}. The file may be corrupt or modified.')
         print(f'Expected: {ACTUAL_HASH}')
         print(f'Got:      {computed_hash}')
         return False
@@ -151,7 +152,6 @@ def setup_dataset(path):
 
     except Exception as e:
         print(f'An error occurred: {e}')
-
 
 def create_gitignore(path='./.gitignore'):
     '''
@@ -285,14 +285,14 @@ def process_and_save_dataset(df, output_path, timestamp_col='timestamp', date_co
         print(f'An unexpected error occurred: {e}')
 
 
-def save_best_arima_order(path, best_arima_order):
-    with open(path, 'wb') as f:
-        pickle.dump(best_arima_order, f)
+# def save_best_arima_order(path, best_arima_order):
+#     with open(path, 'wb') as f:
+#         pickle.dump(best_arima_order, f)
 
-def load_best_arima_order(path):
-    best_arima_order = None
+# def load_best_arima_order(path):
+#     best_arima_order = None
 
-    with open(path, 'rb') as f:
-        best_arima_order = pickle.load(f)
+#     with open(path, 'rb') as f:
+#         best_arima_order = pickle.load(f)
 
-    return best_arima_order
+#     return best_arima_order

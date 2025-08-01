@@ -31,8 +31,8 @@ def _verify_data_integrity(df_cleaned):
     print('\nStep 2: Verifying data integrity...')
     
     anomalies = {
-        'negative_prices': (df_cleaned[['open', 'high', 'low', 'close']] < 0).any().any(),
-        'high_less_than_low': (df_cleaned['high'] < df_cleaned['low']).any(),
+        'negative_prices': (df_cleaned[['open', 'high', 'low', 'close']] < 0).sum().sum(),
+        'high_less_than_low': (df_cleaned['high'] < df_cleaned['low']).sum(),
         'zero_trading_volume': (df_cleaned['volume'] == 0).sum()
     }
 
@@ -129,7 +129,7 @@ def _impute_outliers(df_cleaned):
 
             if classification != 'Possible Real Market Event':
                 indices_to_impute.append(pd.to_datetime(snapshot.index.values[1]))
-
+            
             # Print report
             # print(f"--- Investigation Report for Index: {idx} ---")
             # print(snapshot)
@@ -156,7 +156,7 @@ def _impute_outliers(df_cleaned):
 
     return df_cleaned
 
-def clean_btc_df(df_raw):
+def clean_btc_data(df_raw):
     '''
     Performs a comprehensive cleaning and preprocessing of the raw BTC time-series data.
     
@@ -181,6 +181,7 @@ def clean_btc_df(df_raw):
     Returns:
         pd.DataFrame: A cleaned and fully preprocessed DataFrame ready for analysis.
     '''
+    print()
     print_header('Cleaning and Preprocessing BTC Data')
    
     '''Creates "date" column and set it to index for readability, time-based indexing and analysis'''

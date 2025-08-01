@@ -1,7 +1,5 @@
-from .utils import print_header
-
-def split_df(df, train_size=0.8, valid_size=0.1):
-    print('\n--- Splitting BTC Dataset to Training, Validation, and Test Set ---')
+def split_btc_dataset(df, unit, train_size=0.8, valid_size=0.1):
+    print(f'\n--- Splitting BTC Dataset to Training, Validation, and Test Set ({unit}) ---')
 
     train_index = int(len(df) * train_size)
     valid_index = int(len(df) * valid_size)

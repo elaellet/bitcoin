@@ -45,6 +45,6 @@ def run_adf_test(df_series, col, series_name):
       print(f'\t{key}:{value:.4f}')
 
     if result[1] <= 0.05:
-        print('Conclusion: The p-value is less than or equal to 0.05. The data is likely stationary and seasonal.')
+        print('Conclusion: The p-value is less than or equal to 0.05. The data is likely stationary and seasonal.\n')
     else:
-        print('Conclusion: The p-value is greater than 0.05. The data is likely non-stationary and non-seasonal.')
+        print('Conclusion: The p-value is greater than 0.05. The data is likely non-stationary and non-seasonal.\n')

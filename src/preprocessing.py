@@ -1,8 +1,6 @@
 import numpy as np
 
-from .utils import print_header
-
-def resample_btc_df(df):
+def resample_btc_data(df):
     '''
     Resamples the 1-minute BTC data to various timeframes (hourly, daily, weekly, monthly).
 
