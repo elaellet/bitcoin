@@ -1,96 +1,116 @@
+import pandas as pd
+
 from .models.arima import ARIMAForecaster
 from .models.lstm import LSTMForecaster
 from .models.naive import NaiveForecaster
 from .training import *
 from .utils import print_header
 
-def run_naive_model(df_series, forecast_horizon,
-                    target_col, unit, type):
+def run_naive_model(df_series, target_col, forecast_horizon,
+                    time_unit, data_type):
     '''
-    Runs a naive forecast model, evaluates its performance, and gets a prediction.
+    Initializes, evaluates, and gets a final prediction from a NaiveForecaster.
 
     This function first evaluates the naive model's historical performance on the
-    provided series (calculating MAPE and DA). It then generates a single
-    forecast for the future based on the last value in the series.
+    provided series (calculating MAPE and DA). It then generates a single final
+    forecast for the future based on the last available value.
 
     Args:
         df_series (pd.DataFrame): The DataFrame containing the time series data.
-        forecast_horizon (int): The number of periods to forecast into the future (e.g., 30 for 30 days).
+        forecast_horizon (int): The number of periods for historical evaluation.
         target_col (str): The name of the column to forecast.
-        unit (str): The time unit for the forecast horizon (e.g., 'days', 'weeks').
-        data_type (str): The type of data set being used (e.g., 'Validation', 'Test').
+        time_unit (str): The time unit for the forecast horizon (e.g., 'Days').
+        data_type (str): The type of dataset being used (e.g., 'Validation').
 
     Returns:
         tuple[dict, float]: A tuple containing:
             - A dictionary of evaluation metrics ('mape', 'da').
-            - A single float value representing the future prediction.
+            - A dictionary of float values for future predictions ('one_month', 'one_year').
     '''
-    print_header(f'Naive Model Evaluation on {type} Set (Horizon: {forecast_horizon} {unit})')
+    print_header(f'Naive Model Evaluation on {data_type} Set (Horizon: {forecast_horizon} {time_unit.capitalize()})')
 
-    naive_model = NaiveForecaster(df_series, target_col)
+    model = NaiveForecaster(df_series, target_col)
+    # The 'fit' method does nothing but is called for interface consistency.
+    model.fit()
+    metrics = model.evaluate(forecast_horizon)
+    pred = model.predict(forecast_horizon, time_unit)
 
-    naive_model.fit()
+    return metrics, pred
 
-    metrics = naive_model.evaluate(forecast_horizon)
-
-    preds = naive_model.predict()
-    
-    return metrics, preds
-
-def run_arima_model(df_train, df_valid, target_col, 
+def run_arima_model(df_train, df_valid, df_test, target_col, forecast_horizon,
+                    time_unit, data_type,
                     p_values, d_values, q_values, 
-                    forecast_horizon, refit_interval, naive_result,
-                    type, unit):
+                    refit_interval, naive_metrics):
     '''
-    High-level function to find and evaluate the best ARIMA model.
+    High-level function to find, evaluate, and get predictions from the best ARIMA model.
 
     This function orchestrates the entire ARIMA pipeline:
     1. Defines a search space for ARIMA orders.
-    2. Runs a grid search using walk-forward validation.
-    3. Selects the best model based on performance against a baseline.
+    2. Runs a grid search using walk-forward validation on the validation set.
+    3. Selects the best model based on performance against a naive baseline.
+    4. Fits the best model on all available data and makes final future predictions.
 
     Args:
         df_train: The training dataset.
         df_valid: The validation dataset.
+        df_test: The test dataset.
         forecast_horizon (int): The number of steps to forecast ahead.
-        naive_result (dict): The results from the naive model for comparison.
-        target_col (str): The name of the target column.
+        target_col (str): The name of the column to forecast.
+        time_unit (str): The time unit for the forecast horizon (e.g., 'days', 'weeks').
+        data_type (str): The type of data set being used (e.g., 'Validation', 'Test').
+        p_values (int): A list of p values to test.
+        d_values (int): A list of d values to test.
+        q_values (int): A list of q values to test.
+        refit_interval (int): How often to re-fit the ARIMA model during evaluation.
+        naive_metrics (dict): The results from the naive model for comparison.
 
     Returns:
-        The results dictionary of the best performing ARIMA model.
+        tuple[dict, dict]: A tuple containing:
+            - The results dictionary of the best performing ARIMA model.
+            - A dictionary of final predictions ('one_month', 'one_year').
     '''
-    print(f'\nARIMA Model Evaluation on {type} Set (Horizon: {forecast_horizon} {unit})...')
+    print_header(f'ARIMA Model Evaluation on {data_type} Set (Horizon: {forecast_horizon} {time_unit})')
 
-    # 1. Define the hyperparameter search space.
     orders = generate_arima_orders(p_values, d_values, q_values)
-    
-    # 2. Run the grid search.
-    # A smaller refit interval is more accurate but much slower. 30 is a reasonable trade-off.
-    arima_results = run_arima_grid_search(
+    search_results = run_arima_grid_search(
         df_train, df_valid, target_col,
         orders, forecast_horizon, refit_interval
     )
-    
-    # 3. Select the best model.
-    best_arima_model = select_best_arima_model(arima_results, naive_result)
+    best_metrics = select_best_model(search_results, naive_metrics, 'arima')
 
-    # 4. Predict a price a month/year ahead.
-    if preds:
-        preds = best_arima_model.predict()
-    
-    return best_arima_model
+    metrics = None
+    pred = None 
 
-def run_optimized_arima_model(df_train, df_valid, target_col, 
-                              best_order, forecast_horizon, refit_interval, unit):
-    '''Runs the pre-tuned, optimal ARIMA model.'''
+    if best_metrics:
+        best_order = best_metrics['order']
 
-    print(f'\nRunning optimized ARIMA{best_order} model (Horizon: {forecast_horizon} {unit})...')
-    forecaster = ARIMAForecaster(df_train, df_valid, target_col, order=best_order)
+        df_full_train = pd.concat([df_train, df_valid])
+        model = ARIMAForecaster(df_full_train, df_test, target_col, best_order, False)
+
+        print('\nFitting, evaluating, and predicting ARIMA model with the best order...')
+
+        model.fit()
+        # Setting `refit_interval` to a value greater than 1 significantly speeds up the full grid search process.
+        # However, this can lead to a 'stale' model, resulting in less accurate performance.
+        # A `refit_interval` of 1 ensures the model is evaluated with the best order and produces a more reliable performance metric.
+        metrics = model.evaluate(forecast_horizon, 1)
+        pred = model.predict(forecast_horizon)
+    else:
+        print('\nNo best ARIMA model')
     
-    result = forecaster.fit_and_evaluate(forecast_horizon, refit_interval)
+    return metrics, pred
+
+# def run_optimized_arima_model(df_train, df_valid, target_col, 
+#                               best_order, forecast_horizon, refit_interval, unit):
+#     '''Runs the pre-tuned, optimal ARIMA model.'''
+
+#     print(f'\nRunning optimized ARIMA{best_order} model (Horizon: {forecast_horizon} {unit})...')
+#     forecaster = ARIMAForecaster(df_train, df_valid, target_col, order=best_order)
     
-    print(f'MAPE: {result["mape"]:.4f}%, DA: {result["da"]:.4f}%')
-    return result
+#     result = forecaster.fit_and_evaluate(forecast_horizon, refit_interval)
+    
+#     print(f'MAPE: {result["mape"]:.4f}%, DA: {result["da"]:.4f}%')
+#     return result
 
 def run_lstm_model(df_train, df_valid, input_window, target_window, unit):
     '''

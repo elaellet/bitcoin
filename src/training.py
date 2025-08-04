@@ -28,83 +28,85 @@ def run_arima_grid_search(df_train, df_valid, target_col, orders, forecast_horiz
         refit_interval: How often to re-fit the ARIMA model.
 
     Returns:
-        A list of dictionaries, where each dictionary contains the results for one order.
+        list: A list of dictionaries, where each dictionary contains the results for one order.
     ''' 
-    print(f'\nStarting ARIMA grid search for {len(orders)} combinations...')
-
-    results = list()
+    print(f'Starting ARIMA grid search for {len(orders)} combinations...\n')
+    all_metrics = list()
 
     for order in tqdm(orders, desc='ARIMA Grid Search Progress'):
         try:
-            model = ARIMAForecaster(df_train, df_valid, target_col, order)
-            result = model.fit_and_evaluate(forecast_horizon, refit_interval)
+            model = ARIMAForecaster(df_train, df_valid, target_col, order, True)
+            model.fit()
+            metrics = model.evaluate(forecast_horizon, refit_interval)
             
-            if result is not None:
-                print(f'ARIMA{order} MAPE={result["mape"]:.4f}% DA={result["da"]:.4f}%')
-                results.append(result)
+            if metrics is not None:
+                all_metrics.append(metrics)
 
         except Exception as e:
             # Catch any unexpected errors during model fitting.
             print(f'ARIMA{order} with error: {e}. Skipping.')
             continue
     
-    results.sort(key=lambda x: x['mape'])
+    all_metrics.sort(key=lambda x: x['mape'])
     print('\nARIMA grid search complete.')
     
-    return results
+    return all_metrics
 
-def select_best_model(results, naive_result, type):
+def select_best_model(search_results, naive_metrics, model_type):
     '''
     Selects the best model of a specific type based on performance against a naive model.
 
     The selection criteria are:
     1. Must have a lower MAPE than the naive model.
-    2. Must have a higher Horizon DA than the naive model.
-    3. Of the candidates, choose the one with the highest Horizon DA.
+    2. Must have a higher DA than the naive model.
+    3. Of the candidates, choose the one with the highest DA.
     4. If there's a tie in DA, choose the one with the lowest MAPE.
 
     Args:
-        results: A list of results from the grid search or hyperparameters search.
-        naive_result: The performance dictionary of the naive model.
+        search_results (list): A list of metrics from the grid/hyperparameter search.
+        naive_metrics (dict): The performance dictionary of the naive model.
+        model_type (str): The type of model being selected (e.g., 'ARIMA', 'LSTM').
 
     Returns:
         The dictionary of the best performing model, or None if none outperform the naive model.
     '''
-    type = type.capitalize()
+    model_type_upper = model_type.upper()
 
-    print(f'\n--- Selecting Best {type} Model ---')
-    if not results:
-        print('No successful results to evaluate.')
-        return
+    print(f'\n--- Selecting Best {model_type_upper} Model ---')
+    if not search_results:
+        print('No successful model results to evaluate.')
+        return None
 
-    naive_mape = naive_result['mape']
-    naive_da = naive_result['da']
+    naive_mape = naive_metrics['mape']
+    naive_da = naive_metrics['da']
 
-    print(f'Naive Model: MAPE={naive_mape:.4f}%, Horizon DA={naive_da:.4f}%')
+    print(f'Naive Model Benchmark: MAPE: {naive_mape:.4f}%, DA: {naive_da:.4f}%')
     
     candidates = [
-        result for result in results 
+        result for result in search_results 
         if result['mape'] < naive_mape and result['da'] > naive_da
     ]
 
     if not candidates:
-        print('\nConclusion: No {type} model outperformed the naive model.')
+        print(f'\nConclusion: No {model_type_upper} model outperformed the naive model.')
         return None
 
     print(f'\nFound {len(candidates)} candidate model(s) that beat the naive model:')
     for model in candidates:
-         print(f'  - Order: {model["order"]}, MAPE: {model["mape"]:.4f}%, DA: {model["da"]:.4f}%')
+         identifier = model.get('order', 'hyperparameters')
+         print(f'- Model: {identifier}, MAPE: {model["mape"]:.4f}%, DA: {model["da"]:.4f}%')
 
-    # Sort by DA (desc), then by MAPE (asc).
+    # Sort by DA (decreasing), then by MAPE (ascending) to break ties.
     candidates.sort(key=lambda x: (-x['da'], x['mape']))
-    best_model = candidates[0]
+    best_model_metrics = candidates[0]
 
-    print('\n--- Best {type} Model Chosen ---')
-    print(f'Order: {best_model["order"]}')
-    print(f'MAPE: {best_model["mape"]:.4f}%')
-    print(f'DA: {best_model["da"]:.4f}%')
+    print(f'\n--- Best {model_type_upper} Model Chosen ---')
+    if model_type_upper == 'ARIMA':
+        print(f'- Order: {best_model_metrics["order"]}')
+    print(f'- MAPE: {best_model_metrics["mape"]:.4f}%')
+    print(f'- DA: {best_model_metrics["da"]:.4f}%')
 
-    return best_model
+    return best_model_metrics
 
 class RNNHyperModel(kt.HyperModel):
     '''

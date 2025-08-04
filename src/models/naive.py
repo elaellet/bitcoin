@@ -57,7 +57,7 @@ class NaiveForecaster(BaseForecaster):
         Returns:
             dict: A dictionary containing performance metrics.
         '''
-        print(f'--- Evaluating Naive Model for {forecast_horizon}-step forecast ---')
+        print(f'\n--- Evaluating Naive Model ---')
 
         y_trues = self.df_series[self.target_col]
         y_preds = self.df_series[self.target_col].shift(forecast_horizon)   
@@ -73,24 +73,37 @@ class NaiveForecaster(BaseForecaster):
         mape = self._calculate_mape(y_true, y_pred)
         da = self._calculate_da(y_true, y_pred, forecast_horizon=forecast_horizon)
 
-        print(f'Mean Absolute Percentage Error (MAPE): {mape:.4f}%')
-        print(f'Directional Accuracy (DA): {da:.4f}%')
+        print(f'- Mean Absolute Percentage Error (MAPE): {mape:.4f}%')
+        print(f'- Directional Accuracy (DA): {da:.4f}%')
         
         return {'mape': mape, 'da': da}
     
-    def predict(self):
+    def predict(self, forecast_horizon, time_unit):
         '''
         Generates a single naive forecast based on the last available observation.
 
         Returns:
             float: The last value in the target column.
+
+        Raises:
+            ValueError: If the unsupported time unit is used.
         '''
-        print('--- Generating Final Naive Forecast ---')
+        print(f'\n--- Generating Final Naive Forecast ---')
 
+        time_unit_lower = time_unit.lower()
         pred = self.df_series[self.target_col].iloc[-1]
-        last_available_time = self.df_series.index[-1]
+        last_time = self.df_series.index[-1]
 
-        print(f'Last available time: {last_available_time}')
-        print(f'Prediction based on last available price: ${pred:.2f}')
+        if time_unit_lower == 'days':
+            offset = pd.Timedelta(days=forecast_horizon)
+        elif time_unit_lower == 'weeks':
+            offset = pd.Timedelta(weeks=forecast_horizon)
+        else:
+            raise ValueError('Error: Unsupported time unit')
+
+        future_time = last_time + offset
+        formatted_future_time = future_time.strftime('%Y-%m-%d')
+
+        print(f'- Forecast for {formatted_future_time}: ${pred:.2f}')
 
         return pred

@@ -50,7 +50,7 @@ def resample_btc_data(df):
 
     return resampled
 
-def calculate_log_and_diff_df(df, col):
+def calculate_log_and_diff(df, col):
     '''
     Calculates the log and log returns for a specific column.
 
@@ -63,11 +63,10 @@ def calculate_log_and_diff_df(df, col):
     '''
     # Log transformation stabilizes the variance.
     # Differencing stabilizes the mean by removing or reducing the trend and seasonality.
-    df_copy = df.copy() 
-    df_copy.loc[:, f'log_{col}'] = np.log(df_copy[col])
-    df_copy.loc[:, f'log_returns_{col}'] = df_copy[f'log_{col}'].diff()
+    df.loc[:, f'log_{col}'] = np.log(df[col])
+    df.loc[:, f'log_returns_{col}'] = df[f'log_{col}'].diff()
 
-    return df_copy
+    return df
 
 def calculate_returns(df, col):
     '''

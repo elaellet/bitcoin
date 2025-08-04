@@ -114,9 +114,9 @@ def verify_and_log_checksum(
         with open(checksum_log_path, 'a') as f:
             f.write(f'{dest_path.name}: {dest_hash}\n')
         
-        print(f'Successfully appended checksum to {checksum_log_path}')
+        print(f'\nSuccessfully appended checksum to {checksum_log_path}')
     except Exception as e:
-        print(f'Failed to write to checksum file: {e}')
+        print(f'\nFailed to write to checksum file: {e}')
 
 def setup_dataset(path):
     '''
