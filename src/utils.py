@@ -3,6 +3,7 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
+from finta import TA
 #import pickle
 
 # TODO: How to disable during executable file creation?
@@ -284,6 +285,38 @@ def process_and_save_dataset(df, output_path, timestamp_col='timestamp', date_co
     except Exception as e:
         print(f'An unexpected error occurred: {e}')
 
+
+def add_technical_indicators(df):
+    '''
+    Calculates and adds RSI and MACD technical indicators to the DataFrame.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with 'high', 'low', 'close', and 'volume' columns.
+        
+    Returns:
+        pd.DataFrame: The DataFrame with added indicator columns.
+    '''
+    # Calculate Relative Strength Index (RSI).    
+    #df.ta.rsi(length=14, append=True)
+    df['RSI_14'] = TA.RSI(df, period=14)
+
+    # Calculate Moving Average Convergence Divergence (MACD).
+    # This creates three columns: MACD, MACD_histogram, and MACD_signal.    
+    #df.ta.macd(fast=12, slow=26, signal=9, append=True)
+    # 1. Calculate MACD and store its output in a new DataFrame
+    df_macd = TA.MACD(df, period_fast=12, period_slow=26, signal=9)
+    
+    # 2. Rename the columns of the new DataFrame to match your `indicator_cols` list
+    # The default names are 'MACD' and 'SIGNAL'. We'll make them more specific.
+    df_macd.rename(columns={'MACD': 'MACD_12_26_9', 'SIGNAL': 'MACDs_12_26_9'}, inplace=True)
+    
+    # 3. Join the new MACD DataFrame back to the original DataFrame
+    df = pd.concat([df, df_macd], axis=1)
+
+    # 4. Manually calculate the MACD histogram
+    df['MACDh_12_26_9'] = df['MACD_12_26_9'] - df['MACDs_12_26_9']
+    
+    return df
 
 # def save_best_arima_order(path, best_arima_order):
 #     with open(path, 'wb') as f:

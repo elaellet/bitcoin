@@ -79,8 +79,12 @@ def calculate_returns(df, col):
     Returns:
         pd.DataFrame: The DataFrame with a new 'returns_{col}' column.
     '''
-    # Percentage return is more effective than a simple log transform for LSTMs because it directly represents the period-over-period change.
-    df_copy = df.copy()
-    df_copy.loc[:, f'returns_{col}'] = df_copy[col].pct_change()
+    # Create a temporary series where 0 is replaced by NaN.
+    # dropna() does not remove infinity.
+    # 0/n -> inf, 0/0 -> NaN
+    df_copy = df[col].replace(0, np.nan)
 
-    return df_copy
+    # Percentage return is more effective than a simple log transform for LSTMs because it directly represents the period-over-period change.
+    df.loc[:, f'returns_{col}'] = df_copy.pct_change(fill_method=None)
+
+    return df

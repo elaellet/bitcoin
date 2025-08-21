@@ -5,6 +5,62 @@ from tqdm import tqdm
 
 from .models.arima import ARIMAForecaster
 
+def select_best_model(results, naive_metrics, model_type):
+    '''
+    Selects the best model of a specific type based on performance against a naive model.
+
+    The selection criteria are:
+    1. Must have a lower MAPE than the naive model.
+    2. Must have a higher DA than the naive model.
+    3. Of the candidates, choose the one with the highest DA.
+    4. If there's a tie in DA, choose the one with the lowest MAPE.
+
+    Args:
+        results (list): A list of metrics from the grid search/hyperparameter tuning.
+        naive_metrics (dict): The performance dictionary of the naive model.
+        model_type (str): The type of model being selected (e.g., 'ARIMA', 'LSTM').
+
+    Returns:
+        The dictionary of the best performing model, or None if none outperform the naive model.
+    '''
+    model_type_upper = model_type.upper()
+
+    print(f'\n--- Selecting Best {model_type_upper} Model ---')
+    if not results:
+        print('No successful model results to evaluate.')
+        return None
+
+    naive_mape = naive_metrics['mape']
+    naive_da = naive_metrics['da']
+
+    print(f'- Naive Model Benchmark: MAPE: {naive_mape:.4f}%, DA: {naive_da:.4f}%')
+    
+    candidates = [
+        result for result in results 
+        if result['mape'] < naive_mape and result['da'] > naive_da
+    ]
+
+    if not candidates:
+        print(f'\nConclusion: No {model_type_upper} model outperformed the naive model.')
+        return None
+
+    print(f'\nFound {len(candidates)} candidate model(s) that beat the naive model:')
+    for model in candidates:
+         identifier = model.get('order', 'hyperparameters')
+         print(f'- Model: {identifier}, MAPE: {model["mape"]:.4f}%, DA: {model["da"]:.4f}%')
+
+    # Sort by DA (decreasing), then by MAPE (ascending) to break ties.
+    candidates.sort(key=lambda x: (-x['da'], x['mape']))
+    best_model = candidates[0]
+
+    print(f'\n--- Best {model_type_upper} Model Chosen ---')
+    if model_type_upper == 'ARIMA':
+        print(f'- Order: {best_model["order"]}')
+    print(f'- MAPE: {best_model["mape"]:.4f}%')
+    print(f'- DA: {best_model["da"]:.4f}%')
+
+    return best_model
+
 def generate_arima_orders(p_values, d_values, q_values):
     '''Generates a list of all possible (p, d, q) order combinations for ARIMA.'''    
     orders = list()
@@ -15,13 +71,15 @@ def generate_arima_orders(p_values, d_values, q_values):
 
     return orders
 
-def run_arima_grid_search(df_train, df_valid, target_col, orders, forecast_horizon, refit_interval):
+def run_arima_grid_search(X_train, X_valid, 
+                          target_col, orders, 
+                          forecast_horizon, refit_interval):
     '''
     Performs a grid search over ARIMA orders using walk-forward validation.
 
     Args:
-        df_train: The training dataset.
-        df_valid: The validation dataset.
+        X_train: The training dataset.
+        X_valid: The validation dataset.
         target_col: The name of the target column to forecast.
         orders: A list of (p, d, q) tuples to test.
         forecast_horizon: The number of steps to forecast ahead.
@@ -35,7 +93,7 @@ def run_arima_grid_search(df_train, df_valid, target_col, orders, forecast_horiz
 
     for order in tqdm(orders, desc='ARIMA Grid Search Progress'):
         try:
-            model = ARIMAForecaster(df_train, df_valid, target_col, order, True)
+            model = ARIMAForecaster(X_train, X_valid, target_col, order, True)
             model.fit()
             metrics = model.evaluate(forecast_horizon, refit_interval)
             
@@ -52,80 +110,26 @@ def run_arima_grid_search(df_train, df_valid, target_col, orders, forecast_horiz
     
     return all_metrics
 
-def select_best_model(search_results, naive_metrics, model_type):
-    '''
-    Selects the best model of a specific type based on performance against a naive model.
-
-    The selection criteria are:
-    1. Must have a lower MAPE than the naive model.
-    2. Must have a higher DA than the naive model.
-    3. Of the candidates, choose the one with the highest DA.
-    4. If there's a tie in DA, choose the one with the lowest MAPE.
-
-    Args:
-        search_results (list): A list of metrics from the grid/hyperparameter search.
-        naive_metrics (dict): The performance dictionary of the naive model.
-        model_type (str): The type of model being selected (e.g., 'ARIMA', 'LSTM').
-
-    Returns:
-        The dictionary of the best performing model, or None if none outperform the naive model.
-    '''
-    model_type_upper = model_type.upper()
-
-    print(f'\n--- Selecting Best {model_type_upper} Model ---')
-    if not search_results:
-        print('No successful model results to evaluate.')
-        return None
-
-    naive_mape = naive_metrics['mape']
-    naive_da = naive_metrics['da']
-
-    print(f'Naive Model Benchmark: MAPE: {naive_mape:.4f}%, DA: {naive_da:.4f}%')
-    
-    candidates = [
-        result for result in search_results 
-        if result['mape'] < naive_mape and result['da'] > naive_da
-    ]
-
-    if not candidates:
-        print(f'\nConclusion: No {model_type_upper} model outperformed the naive model.')
-        return None
-
-    print(f'\nFound {len(candidates)} candidate model(s) that beat the naive model:')
-    for model in candidates:
-         identifier = model.get('order', 'hyperparameters')
-         print(f'- Model: {identifier}, MAPE: {model["mape"]:.4f}%, DA: {model["da"]:.4f}%')
-
-    # Sort by DA (decreasing), then by MAPE (ascending) to break ties.
-    candidates.sort(key=lambda x: (-x['da'], x['mape']))
-    best_model_metrics = candidates[0]
-
-    print(f'\n--- Best {model_type_upper} Model Chosen ---')
-    if model_type_upper == 'ARIMA':
-        print(f'- Order: {best_model_metrics["order"]}')
-    print(f'- MAPE: {best_model_metrics["mape"]:.4f}%')
-    print(f'- DA: {best_model_metrics["da"]:.4f}%')
-
-    return best_model_metrics
-
 class RNNHyperModel(kt.HyperModel):
     '''
-    A Keras Tuner HyperModel for building and tuning time series forecasters.
-    It is initialized with a specific RNN type ("lstm" or "gru").
+    A Keras Tuner HyperModel for building and tuning sequence-to-sequence
+    time series forecasters. It is initialized with a specific RNN type.
     '''
-    def __init__(self, n_features, target_window, rnn_type):
+    def __init__(self, n_features, target_window,
+                 rnn_type, strategy='direct'):
         self.n_features = n_features
         self.target_window = target_window
         if rnn_type.lower() not in ['lstm', 'gru']:
             raise ValueError('rnn_type must be "lstm" or "gru"')
         self.rnn_type = rnn_type.lower()
+        self.strategy = strategy
 
     def build(self, hp):
         '''Builds a compiled Keras model with tunable hyperparameters.'''
         # Architectural Hyperparameters.
         n_conv_layers = hp.Int('n_conv_layers', min_value=1, max_value=3, step=1)
         kernel_size = hp.Choice('kernel_size', values=[3, 5, 7])
-        n_rnn_layers = hp.Int('n_rnn_layers', min_value=1, max_value=8, step=1)
+        n_rnn_layers = hp.Int('n_rnn_layers', min_value=1, max_value=3, step=1)
 
         # Regularization Hyperparameters.
         use_l2 = hp.Boolean('use_l2')
@@ -161,7 +165,7 @@ class RNNHyperModel(kt.HyperModel):
                 padding='causal',
                 # The combination of ReLU + He initialization is a robust default.
                 activation='relu', kernel_initializer='he_normal',
-                kernel_regularizer=tf.keras.regularizers.l2(l2_rate)# if use_l2 else None
+                kernel_regularizer=tf.keras.regularizers.l2(l2_rate)
             ))
 
         RNNCell = tf.keras.layers.LSTM if self.rnn_type == 'lstm' else tf.keras.layers.GRU
@@ -173,18 +177,23 @@ class RNNHyperModel(kt.HyperModel):
                 # Instead of a 3D array containing outputs for all time steps.
                 return_sequences=True, 
                 activation='tanh', kernel_initializer='glorot_uniform',
-                kernel_regularizer=tf.keras.regularizers.l2(l2_rate), # if use_l2 else None,
-                # Recurrent dropout randomly drops connections within the recurrent cell, but—and this is the key—it uses the same dropout mask for every time step in a given sequence. 
+                kernel_regularizer=tf.keras.regularizers.l2(l2_rate),
+                # Recurrent dropout randomly drops connections within the recurrent cell. It uses the same dropout mask for every time step in a given sequence. 
                 # This prevents overfitting on the time-dependent connections without causing the model to forget what it just saw.
                 recurrent_dropout=dropout_rate
             ))
             model.add(tf.keras.layers.LayerNormalization())
 
-         # Add Dropout before the final Dense layer.       
+         # Add dropout before the final dense layer.
         if dropout_rate > 0:
             model.add(tf.keras.layers.Dropout(dropout_rate))
 
-        model.add(tf.keras.layers.Dense(self.target_window))
+        if self.strategy == 'direct':
+            # For monthly forecast, predict the full target window.
+            model.add(tf.keras.layers.Dense(self.target_window))
+        else:
+            # For yearly forecast, predict only one step ahead.
+            model.add(tf.keras.layers.Dense(1))
 
         if optimizer == 'adam':
             optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=clipnorm)
@@ -202,7 +211,11 @@ class RNNHyperModel(kt.HyperModel):
     #     # Pass the selected batch size to the original model.fit().
     #     return model.fit(*args, batch_size=batch_size, **kwargs)
 
-def tune_rnn_forecaster(train_set, valid_set, rnn_type, n_features, target_window, max_trials=15):
+def tune_rnn_forecaster(train_set, valid_set, 
+                        rnn_type, n_features, 
+                        target_window, 
+                        train_steps, valid_steps,
+                        max_trials=15):
     '''
     Runs Keras Tuner to find the best hyperparameters for an RNN-based forecaster.
 
@@ -212,6 +225,8 @@ def tune_rnn_forecaster(train_set, valid_set, rnn_type, n_features, target_windo
         rnn_type: The type of RNN cell to use ('lstm' or 'gru').
         n_features: The number of input features.
         target_window: The number of steps to forecast.
+        train_steps (int): The number of batches per training epoch.
+        valid_steps (int): The number of batches per validation epoch.        
         max_trials: The number of hyperparameter combinations to test.
 
     Returns:
@@ -230,32 +245,38 @@ def tune_rnn_forecaster(train_set, valid_set, rnn_type, n_features, target_windo
     project_name = f'{rnn_type}_forecaster_tuning'
     tuner = kt.BayesianOptimization(
         hypermodel=hypermodel,
-        objective='val_loss',
+        objective='val_mae',
         max_trials=max_trials,
         directory='keras_tuner',
         project_name=project_name,
+        seed=42,
         # Directory is deleted before training starts.
         overwrite=True
     )
 
     # TODO: Custom metric function (MAPE DA)?
-    early_stopping_cb = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, verbose=1)
+    # TODO: val_loss vs. val_mae?
+    early_stopping_cb = tf.keras.callbacks.EarlyStopping(monitor='val_mae', patience=10, verbose=1)
     # A dynamic scheduler can significantly improve performance.
     # ReduceLROnPlateau reduces the learning rate automatically when the validation loss stops improving.
     # It lets the model learn as much as it can with the current learning rate and only steps in when it gets stuck.
-    lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5)
+    lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5)
 
-    print(f'\nStarting hyperparameter search for {rnn_type.upper()} Model...')
+    rnn_type_upper = rnn_type.upper()
+    print(f'\nStarting hyperparameter search for {rnn_type_upper} model...')
     tuner.search(
         train_set,
         epochs=30,
         validation_data=valid_set,
+        steps_per_epoch=train_steps,
+        validation_steps=valid_steps,
         callbacks=[early_stopping_cb, lr_scheduler_cb]
     )
 
     best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
-    print(f'\nSearch Complete for {rnn_type.upper()}. Best Hyperparameters: ---')
+    print(f'\n{rnn_type_upper} hyperparameter tuning complete:')
     for hp, value in best_hps.values.items():
-        print(f'{hp}: {value}')
+        print(f'- {hp}: {value}')
+    print()
     
     return best_hps

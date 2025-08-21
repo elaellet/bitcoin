@@ -1,4 +1,6 @@
+import numpy as np
 import pandas as pd
+import tensorflow as tf
 
 from .models.arima import ARIMAForecaster
 from .models.lstm import LSTMForecaster
@@ -6,7 +8,7 @@ from .models.naive import NaiveForecaster
 from .training import *
 from .utils import print_header
 
-def run_naive_model(df_series, target_col, forecast_horizon,
+def run_naive_model(X_series, target_col, forecast_horizon,
                     time_unit, data_type):
     '''
     Initializes, evaluates, and gets a final prediction from a NaiveForecaster.
@@ -16,7 +18,7 @@ def run_naive_model(df_series, target_col, forecast_horizon,
     forecast for the future based on the last available value.
 
     Args:
-        df_series (pd.DataFrame): The DataFrame containing the time series data.
+        X_series (pd.DataFrame): The DataFrame containing the time series data.
         forecast_horizon (int): The number of periods for historical evaluation.
         target_col (str): The name of the column to forecast.
         time_unit (str): The time unit for the forecast horizon (e.g., 'Days').
@@ -29,15 +31,16 @@ def run_naive_model(df_series, target_col, forecast_horizon,
     '''
     print_header(f'Naive Model Evaluation on {data_type} Set (Horizon: {forecast_horizon} {time_unit.capitalize()})')
 
-    model = NaiveForecaster(df_series, target_col)
+    model = NaiveForecaster(X_series, target_col)
     # The 'fit' method does nothing but is called for interface consistency.
     model.fit()
     metrics = model.evaluate(forecast_horizon)
-    pred = model.predict(forecast_horizon, time_unit)
+    y_pred = model.predict(forecast_horizon)
 
-    return metrics, pred
+    return metrics, y_pred
 
-def run_arima_model(df_train, df_valid, df_test, target_col, forecast_horizon,
+def run_arima_model(X_train, X_valid, X_test, 
+                    target_col, forecast_horizon,
                     time_unit, data_type,
                     p_values, d_values, q_values, 
                     refit_interval, naive_metrics):
@@ -51,9 +54,9 @@ def run_arima_model(df_train, df_valid, df_test, target_col, forecast_horizon,
     4. Fits the best model on all available data and makes final future predictions.
 
     Args:
-        df_train: The training dataset.
-        df_valid: The validation dataset.
-        df_test: The test dataset.
+        X_train: The training dataset.
+        X_valid: The validation dataset.
+        X_test: The test dataset.
         forecast_horizon (int): The number of steps to forecast ahead.
         target_col (str): The name of the column to forecast.
         time_unit (str): The time unit for the forecast horizon (e.g., 'days', 'weeks').
@@ -73,19 +76,19 @@ def run_arima_model(df_train, df_valid, df_test, target_col, forecast_horizon,
 
     orders = generate_arima_orders(p_values, d_values, q_values)
     search_results = run_arima_grid_search(
-        df_train, df_valid, target_col,
+        X_train, X_valid, target_col,
         orders, forecast_horizon, refit_interval
     )
-    best_metrics = select_best_model(search_results, naive_metrics, 'arima')
+    best_model = select_best_model(search_results, naive_metrics, 'arima')
 
     metrics = None
-    pred = None 
+    y_pred = None
 
-    if best_metrics:
-        best_order = best_metrics['order']
+    if best_model:
+        best_order = best_model['order']
 
-        df_full_train = pd.concat([df_train, df_valid])
-        model = ARIMAForecaster(df_full_train, df_test, target_col, best_order, False)
+        X_full_train = pd.concat([X_train, X_valid])
+        model = ARIMAForecaster(X_full_train, X_test, target_col, best_order, False)
 
         print('\nFitting, evaluating, and predicting ARIMA model with the best order...')
 
@@ -94,97 +97,163 @@ def run_arima_model(df_train, df_valid, df_test, target_col, forecast_horizon,
         # However, this can lead to a 'stale' model, resulting in less accurate performance.
         # A `refit_interval` of 1 ensures the model is evaluated with the best order and produces a more reliable performance metric.
         metrics = model.evaluate(forecast_horizon, 1)
-        pred = model.predict(forecast_horizon)
+        y_pred = model.predict(forecast_horizon)
+    
+    return metrics, y_pred
+
+def run_optimized_arima_model(X_train, X_valid, X_test,
+                              target_col, best_order, 
+                              forecast_horizon, time_unit):
+    '''Runs the pre-tuned, optimal ARIMA model.'''
+    if best_order == None:
+        print_header(f'No Optimized ARIMA Model (Horizon: {forecast_horizon} {time_unit})')
+        return None
+
+    print_header(f'Running Optimized ARIMA{best_order} Model (Horizon: {forecast_horizon} {time_unit})')
+    
+    X_full_train = pd.concat([X_train, X_valid])
+    model = ARIMAForecaster(X_full_train, X_test, target_col, best_order, False)
+
+    model.fit()
+    metrics = model.evaluate(forecast_horizon, 1)
+    y_pred = model.predict(forecast_horizon)
+
+    return metrics, y_pred
+
+def _run_rnn_pipeline(rnn_type, X_train, X_valid, X_test,
+                      feature_cols, target_col, forecast_horizon,
+                      input_window, target_window,
+                      time_unit, data_type,
+                      naive_metrics, strategy):
+    
+    rnn_type_upper = rnn_type.upper()
+    print_header(f'{rnn_type_upper} Model Evaluation on {data_type} Set (Horizon: {forecast_horizon} {time_unit})')
+
+    tuner_model = LSTMForecaster(X_train, X_valid,
+                                 feature_cols, target_col, 
+                                 input_window, target_window, strategy=strategy)
+    tuner_model._prepare_data()
+
+    n_features = len(feature_cols)
+
+    if strategy == 'direct':
+        train_steps = (len(tuner_model.X_train_processed) - input_window - target_window + 1) // tuner_model.batch_size
+        valid_steps = (len(tuner_model.X_valid_processed) - input_window - target_window + 1) // tuner_model.batch_size
     else:
-        print('\nNo best ARIMA model')
+        train_steps = (len(tuner_model.X_train_processed) - input_window) // tuner_model.batch_size
+        # The original code used integer division (//), which resulted in valid_steps = 0 for a small validation set, causing the training to hang.
+        # This fix uses ceiling division to ensure valid_steps is at least 1 if there are any validation samples.
+        valid_samples = len(tuner_model.X_valid_processed) - input_window
+        if valid_samples > 0:
+            valid_steps = int(np.ceil(valid_samples / tuner_model.batch_size))
+        else:
+            valid_steps = 0
+
+    best_hps = tune_rnn_forecaster(tuner_model.train_set, tuner_model.valid_set, 
+                                   'lstm', n_features, target_window,
+                                   train_steps, valid_steps)
     
-    return metrics, pred
+    tuner_hypermodel = RNNHyperModel(n_features, target_window, rnn_type, strategy).build(best_hps)
 
-# def run_optimized_arima_model(df_train, df_valid, target_col, 
-#                               best_order, forecast_horizon, refit_interval, unit):
-#     '''Runs the pre-tuned, optimal ARIMA model.'''
-
-#     print(f'\nRunning optimized ARIMA{best_order} model (Horizon: {forecast_horizon} {unit})...')
-#     forecaster = ARIMAForecaster(df_train, df_valid, target_col, order=best_order)
-    
-#     result = forecaster.fit_and_evaluate(forecast_horizon, refit_interval)
-    
-#     print(f'MAPE: {result["mape"]:.4f}%, DA: {result["da"]:.4f}%')
-#     return result
-
-def run_lstm_model(df_train, df_valid, input_window, target_window, unit):
-    '''
-    High-level function to run the LSTM forecasting pipeline.
-
-    This function orchestrates the entire process:
-    1. Defines the model's configuration (features, windows).
-    2. Optionally runs the hyperparameter tuner to find the best model architecture.
-    3. Instantiates and trains the final LSTM forecaster.
-    4. Evaluates the model and returns the performance metrics.
-
-    Args:
-        df_train: The training dataset.
-        df_valid: The validation dataset.
-        forecast_horizon (int): The number of steps to forecast ahead.
-        use_tuner (bool): If True, runs the Keras Tuner. If False, uses pre-defined
-                          optimal hyperparameters. Defaults to False.
-
-    Returns:
-        A dictionary containing the model's performance metrics.
-    '''
-    print(f'\nLSTM model pipeline (Horizon: {target_window} {unit})')
-
-    FEATURE_COLS = ['open', 'high', 'low', 'close', 'volume']
-    TARGET_COL = 'close'
-
-    lstm_forecaster = LSTMForecaster(
-        df_train,
-        df_valid,
-        input_window,
-        target_window,
-        FEATURE_COLS,
-        TARGET_COL
+    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint('lstm_checkpoints.weights.h5', save_weights_only=True)
+    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
+        monitor='val_mae', patience=15, restore_best_weights=True
     )
+    lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=7)
+    callbacks = [checkpoint_cb, early_stopping_cb, lr_scheduler_cb]
+    epochs = 100
 
-    train_set, valid_set = lstm_forecaster._prepare_data()
-    best_hps = tune_rnn_forecaster(
-        train_set, valid_set, 'lstm', len(FEATURE_COLS), target_window
+    tuner_model.fit(
+        tuner_hypermodel,
+        epochs,
+        callbacks
     )
-    model = RNNHyperModel(len(FEATURE_COLS), target_window, 'lstm').build(best_hps)
+    tuning_results = tuner_model.evaluate(forecast_horizon)
 
-    model.summary()
-    
-    results = lstm_forecaster.train_and_evaluate(model, 100)
-    
-    return results
+    best_model = select_best_model([tuning_results], naive_metrics, rnn_type)
 
-def run_optimized_lstm_model(df_train, df_valid, input_window, target_window, unit):
+    metrics = None
+    y_pred = None
+    
+    if best_model:
+        X_full_train = pd.concat([X_train, X_valid])
+        model = LSTMForecaster(X_full_train, X_test,
+                               feature_cols, target_col,
+                               input_window, target_window, strategy=strategy)
+        
+        print(f'\nFitting, evaluating, and predicting {rnn_type_upper} model with the best hyperparameters...')
+
+        hypermodel = RNNHyperModel(n_features, target_window, rnn_type, strategy).build(best_hps)
+        hypermodel.summary()
+
+        model.fit(hypermodel, epochs, callbacks)
+
+        metrics = model.evaluate(forecast_horizon)
+        y_pred = model.predict(model.model, forecast_horizon)
+    
+    return metrics, y_pred
+
+def run_lstm_model(X_train, X_valid, X_test,
+                   feature_cols, target_col, forecast_horizon,
+                   input_window, target_window,
+                   time_unit, data_type, 
+                   naive_metrics, strategy):
+    '''High-level function to run the complete LSTM forecasting pipeline.'''
+    return _run_rnn_pipeline('lstm', X_train, X_valid, X_test, 
+                             feature_cols, target_col, forecast_horizon,
+                             input_window, target_window, 
+                             time_unit, data_type, 
+                             naive_metrics, strategy)
+
+
+def run_optimized_lstm_model(X_train, X_valid, X_test,
+                             input_window, target_window, forecast_horizon,
+                             time_unit, best_hps, strategy):
     '''Runs the pre-tuned, optimal LSTM model.'''
-    print(f'\nUsing pre-defined optimal hyperparameters for the LSTM model (Horizon: {target_window} {unit})...')
+    print_header(f'Running Optimized LSTM Model (Horizon: {forecast_horizon} {time_unit})')
 
     FEATURE_COLS = ['open', 'high', 'low', 'close', 'volume']
     TARGET_COL = 'close'
 
-    lstm_forecaster = LSTMForecaster(
-        df_train,
-        df_valid,
+    X_full_train = pd.concat([X_train, X_valid])
+
+    forecaster = LSTMForecaster(
+        X_full_train,
+        X_test,
+        FEATURE_COLS,
+        TARGET_COL,
         input_window,
         target_window,
-        FEATURE_COLS,
-        TARGET_COL
+        strategy=strategy
     )
 
-    hps = {
-        'n_conv_layers': 1, 'filters_0': 128, 'kernel_size_0': 5,
-        'n_rnn_layers': 2, 'units_0': 128, 'units_1': 64,
-        'dropout_rate': 0.2, 'learning_rate': 0.001
-    }
+    n_features = len(FEATURE_COLS)
+    hypermodel = RNNHyperModel(n_features, target_window, 'lstm', strategy)
+    model = hypermodel.build(kt.HyperParameters.from_config({'values': best_hps}))
 
-    hypermodel = RNNHyperModel(len(FEATURE_COLS), target_window, 'lstm')
-    model = hypermodel.build(kt.HyperParameters.from_config({'values': hps}))
-
+    print('\n--- Optimal Model Architecture ---')
     model.summary()
+
+    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
+        monitor='val_mae', patience=15, restore_best_weights=True
+    )
+    lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=7)
+    callbacks = [early_stopping_cb, lr_scheduler_cb]
+    epochs = 100
+
+    forecaster.fit(model, epochs, callbacks)
+
+    metrics = forecaster.evaluate(forecast_horizon)
+    y_pred = forecaster.predict(model, forecast_horizon)
     
-    results = lstm_forecaster.train_and_evaluate(model, 100)
-    
-    return results
+    return metrics, y_pred
+
+def run_gru_model(X_train, X_valid, X_test,
+                   feature_cols, target_col, forecast_horizon,
+                   input_window, target_window,
+                   time_unit, data_type, naive_metrics):
+    '''High-level function to run the complete GRU forecasting pipeline.'''
+    return _run_rnn_pipeline('gru', X_train, X_valid, X_test, 
+                             feature_cols, target_col, forecast_horizon,
+                             input_window, target_window, 
+                             time_unit, data_type, naive_metrics)
