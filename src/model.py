@@ -3,6 +3,7 @@ import pandas as pd
 import tensorflow as tf
 
 from .models.arima import ARIMAForecaster
+from .models.gru import GRUForecaster
 from .models.lstm import LSTMForecaster
 from .models.naive import NaiveForecaster
 from .training import *
@@ -129,9 +130,15 @@ def _run_rnn_pipeline(rnn_type, X_train, X_valid, X_test,
     rnn_type_upper = rnn_type.upper()
     print_header(f'{rnn_type_upper} Model Evaluation on {data_type} Set (Horizon: {forecast_horizon} {time_unit})')
 
-    tuner_model = LSTMForecaster(X_train, X_valid,
-                                 feature_cols, target_col, 
-                                 input_window, target_window, strategy=strategy)
+    if rnn_type_upper == 'LSTM':
+        tuner_model = LSTMForecaster(X_train, X_valid,
+                                     feature_cols, target_col, 
+                                     input_window, target_window, strategy=strategy)
+    else:
+        tuner_model = GRUForecaster(X_train, X_valid,
+                                    feature_cols, target_col, 
+                                    input_window, target_window, strategy=strategy)
+
     tuner_model._prepare_data()
 
     n_features = len(feature_cols)
@@ -177,10 +184,16 @@ def _run_rnn_pipeline(rnn_type, X_train, X_valid, X_test,
     
     if best_model:
         X_full_train = pd.concat([X_train, X_valid])
-        model = LSTMForecaster(X_full_train, X_test,
-                               feature_cols, target_col,
-                               input_window, target_window, strategy=strategy)
-        
+
+        if rnn_type_upper == 'LSTM':
+            model = LSTMForecaster(X_full_train, X_test,
+                                   feature_cols, target_col,
+                                   input_window, target_window, strategy=strategy)
+        else:
+            model = GRUForecaster(X_full_train, X_test,
+                                  feature_cols, target_col,
+                                  input_window, target_window, strategy=strategy)
+
         print(f'\nFitting, evaluating, and predicting {rnn_type_upper} model with the best hyperparameters...')
 
         hypermodel = RNNHyperModel(n_features, target_window, rnn_type, strategy).build(best_hps)
@@ -204,7 +217,6 @@ def run_lstm_model(X_train, X_valid, X_test,
                              input_window, target_window, 
                              time_unit, data_type, 
                              naive_metrics, strategy)
-
 
 def run_optimized_lstm_model(X_train, X_valid, X_test,
                              input_window, target_window, forecast_horizon,
@@ -231,7 +243,7 @@ def run_optimized_lstm_model(X_train, X_valid, X_test,
     hypermodel = RNNHyperModel(n_features, target_window, 'lstm', strategy)
     model = hypermodel.build(kt.HyperParameters.from_config({'values': best_hps}))
 
-    print('\n--- Optimal Model Architecture ---')
+    print('\n--- Optimal LSTM Model Architecture ---')
     model.summary()
 
     early_stopping_cb = tf.keras.callbacks.EarlyStopping(
@@ -251,9 +263,53 @@ def run_optimized_lstm_model(X_train, X_valid, X_test,
 def run_gru_model(X_train, X_valid, X_test,
                    feature_cols, target_col, forecast_horizon,
                    input_window, target_window,
-                   time_unit, data_type, naive_metrics):
+                   time_unit, data_type, 
+                   naive_metrics, strategy):
     '''High-level function to run the complete GRU forecasting pipeline.'''
     return _run_rnn_pipeline('gru', X_train, X_valid, X_test, 
                              feature_cols, target_col, forecast_horizon,
                              input_window, target_window, 
-                             time_unit, data_type, naive_metrics)
+                             time_unit, data_type, 
+                             naive_metrics, strategy)
+
+def run_optimized_gru_model(X_train, X_valid, X_test,
+                             input_window, target_window, forecast_horizon,
+                             time_unit, best_hps, strategy):
+    '''Runs the pre-tuned, optimal GRU model.'''
+    print_header(f'Running Optimized GRU Model (Horizon: {forecast_horizon} {time_unit})')
+
+    FEATURE_COLS = ['open', 'high', 'low', 'close', 'volume']
+    TARGET_COL = 'close'
+
+    X_full_train = pd.concat([X_train, X_valid])
+
+    forecaster = GRUForecaster(
+        X_full_train,
+        X_test,
+        FEATURE_COLS,
+        TARGET_COL,
+        input_window,
+        target_window,
+        strategy=strategy
+    )
+
+    n_features = len(FEATURE_COLS)
+    hypermodel = RNNHyperModel(n_features, target_window, 'lstm', strategy)
+    model = hypermodel.build(kt.HyperParameters.from_config({'values': best_hps}))
+
+    print('\n--- Optimal GRU Model Architecture ---')
+    model.summary()
+
+    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
+        monitor='val_mae', patience=15, restore_best_weights=True
+    )
+    lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=7)
+    callbacks = [early_stopping_cb, lr_scheduler_cb]
+    epochs = 100
+
+    forecaster.fit(model, epochs, callbacks)
+
+    metrics = forecaster.evaluate(forecast_horizon)
+    y_pred = forecaster.predict(model, forecast_horizon)
+    
+    return metrics, y_pred
