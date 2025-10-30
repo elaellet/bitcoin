@@ -1,0 +1,68 @@
+ohlcv_382_raw:
+- dataset_name: ohlcv_382_raw.csv
+  frozen_date: '2025-10-08 23:56:00'
+  time_range:
+    start: '2012-01-01 10:01:00'
+    end: '2025-10-08 23:56:00'
+  dimensions:
+    rows: 7241436
+    columns: 6
+  columns:
+    Timestamp: float64
+    Open: float64
+    High: float64
+    Low: float64
+    Close: float64
+    Volume: float64
+  key_variables: '
+
+    Open/High/Low/Close prices
+
+    Volume (BTC/USD)
+
+    Timestamp (Unix epoch)
+
+    '
+  paths:
+    raw_data: /content/drive/MyDrive/projects/btc/data/raw/ohlcv_382_raw.csv
+    cleaned_data: /content/drive/MyDrive/projects/btc/data/cleaned/ohlcv_382_cleaned.csv
+  source:
+    name: Kaggle API
+    url: https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data
+  checksum:
+    algorithm: SHA-256
+    value: b4d231a6b5a626af1362583ed4595b1e229d833e720811a8a35398611578341a
+ohlcv_399_raw:
+- dataset_name: ohlcv_399_raw.csv
+  frozen_date: '2025-10-25 23:58:00'
+  time_range:
+    start: '2012-01-01 10:01:00'
+    end: '2025-10-25 23:58:00'
+  dimensions:
+    rows: 7265918
+    columns: 6
+  columns:
+    Timestamp: float64
+    Open: float64
+    High: float64
+    Low: float64
+    Close: float64
+    Volume: float64
+  key_variables: '
+
+    Open/High/Low/Close prices
+
+    Volume (BTC/USD)
+
+    Timestamp (Unix epoch)
+
+    '
+  paths:
+    raw_data: /content/drive/MyDrive/projects/btc/data/raw/ohlcv_399_raw.csv
+    cleaned_data: /content/drive/MyDrive/projects/btc/data/cleaned/ohlcv_399_cleaned.csv
+  source:
+    name: Kaggle API
+    url: https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data
+  checksum:
+    algorithm: SHA-256
+    value: 2ba0dfcc71ce616d46b74a4c27a73061757fecaa0dcd3a82540095401b30b451

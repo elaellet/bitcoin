@@ -1,15 +1,18 @@
-# Data and local configs.
-data/**/*
+# Environment and secrets
+.env
 
-# Jupyter Notebook checkpoints.
-.ipynb_checkpoints/
+    # Data folders
+    # We commit the structure and metadata, but not the raw/cleaned data files.
+data/raw/
+data/cleaned/
 
-# Python cache.
+    # Python cache and artifacts
 __pycache__/
 *.pyc
-
-# Other common files to ignore.
 *.pkl
-*.csv
+
+    # Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+    # OS-specific files
 .DS_Store
-env

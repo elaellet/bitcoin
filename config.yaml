@@ -1,0 +1,90 @@
+LSTM:
+  weekly:
+    n_conv_layers: 2
+    kernel_size: 5
+    n_rnn_layers: 3
+    use_l2: false
+    dropout: 0.30000000000000004
+    learning_rate: 0.005117045969850107
+    optimizer: adam
+    clipnorm: 1.1
+    filters_0: 96
+    units_0: 96
+    filters_1: 192
+    units_1: 160
+    filters_2: 224
+    units_2: 32
+    l2_rate: 0.005343634220268847
+  monthly:
+    n_conv_layers: 2
+    kernel_size: 5
+    n_rnn_layers: 3
+    use_l2: false
+    dropout: 0.30000000000000004
+    learning_rate: 0.005117045969850107
+    optimizer: adam
+    clipnorm: 1.1
+    filters_0: 96
+    units_0: 96
+    filters_1: 192
+    units_1: 160
+    filters_2: 224
+    units_2: 32
+    l2_rate: 0.005343634220268847
+GRU:
+  weekly:
+    n_conv_layers: 2
+    kernel_size: 5
+    n_rnn_layers: 3
+    use_l2: true
+    dropout: 0.30000000000000004
+    learning_rate: 0.005117045969850107
+    optimizer: adam
+    clipnorm: 1.1
+    filters_0: 96
+    units_0: 96
+    filters_1: 192
+    units_1: 160
+    filters_2: 224
+    units_2: 32
+    l2_rate: 0.005343634220268847
+  monthly:
+    n_conv_layers: 2
+    kernel_size: 5
+    n_rnn_layers: 3
+    use_l2: true
+    dropout: 0.30000000000000004
+    learning_rate: 0.005117045969850107
+    optimizer: adam
+    clipnorm: 1.1
+    filters_0: 96
+    units_0: 96
+    filters_1: 192
+    units_1: 160
+    filters_2: 224
+    units_2: 32
+    l2_rate: 0.005343634220268847
+XGB:
+  weekly:
+    max_depth: 8
+    learning_rate: 0.02035961462462537
+    min_child_weight: 3
+    subsample: 0.8122909048600037
+    colsample_bytree: 0.756553078833234
+    reg_alpha: 0.9151445932854982
+    reg_lambda: 0.0003910864887555302
+    n_estimators: 1000
+  monthly:
+    max_depth: 3
+    learning_rate: 0.008993931736681457
+    min_child_weight: 1
+    subsample: 0.7975990992289793
+    colsample_bytree: 0.8166031869068446
+    reg_alpha: 0.00022737628102536837
+    reg_lambda: 0.13921548533046504
+    n_estimators: 1000
+ARIMA:
+  weekly:
+    order: [5, 1, 3]
+  monthly:
+    order: [5, 1, 6]

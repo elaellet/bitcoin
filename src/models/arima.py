@@ -12,137 +12,158 @@ from tqdm import tqdm
 from .base import *
 
 class ARIMAForecaster(BaseForecaster):
-    '''A forecaster for the ARIMA model, optimized for walk-forward validation.'''
-    def __init__(self, X_train, X_valid, target_col, order, use_tqdm):
+    '''A forecaster for the ARIMA models.'''
+    def __init__(self, train_ds, valid_ds,
+                 target_col, window_size, order, 
+                 use_tqdm, hold_thld=0.005):
         if not isinstance(order, tuple) or len(order) != 3:
             raise ValueError('Order must be a tuple of (p, d, q).')
         
-        super().__init__(X_train, X_valid, target_col)
+        super().__init__(train_ds, valid_ds, target_col)
 
+        self.train_ds = train_ds
+        self.valid_ds = valid_ds
+        self.window_size = window_size
         self.order = order
         self.use_tqdm = use_tqdm
+        self.hold_thld = hold_thld
+        self.window_size = window_size
 
-    def _inverse_transform(self, log_value):
-        '''Helper function to reverse the log transformation.'''
-        return np.exp(log_value)
+    def _calculate_mape(self, true, pred):
+        '''
+        Calculates the Mean Absolute Percentage Error (MAPE).
+        
+        Args:
+            true (pd.Series): The Series of the truth values.
+            pred (pd.Series): The Series of the predicted values.
 
-    def _calculate_da(self, Y_results, history, forecast_horizon):
-        '''Calculates directional accuracy from a results dataframe.'''
-        # Make a copy to avoid modifying the original dataframe.
-        Y = Y_results.copy()
+        Returns:
+            float: The MAPE value as a percentage.
+        '''
+        return mean_absolute_percentage_error(true, pred) * 100
+    
+    def _calculate_da(self, comp, history, forecast_horizon):
+        '''
+        Calculates the Directional Accuracy (DA).
 
-        # Find the starting price for each forecast.
+        For a forecast made at time `t` for a future time `t + forecast_horizon`,
+        this function defines:
+        - The `baselines` as the actual values at time `t`.
+        - The true direction as sign (value at `t + forecast_horizon` - baselines).
+        - The predicted direction as sign (prediction for `t + forecast_horizon` - baselines).
+
+        Args:
+            comp (pd.DataFrame): The DataFrame containing the actual and predicted values for comparison.
+            history (pd.Series): The Series containing the complete, true historical values of the time series.
+            forecast_horizon (int): The number of steps to forecast.
+
+        Returns:
+            float: A DA value, returned as a percentage.            
+                Returns 50.0 if the comp DataFrame becomes empty after handling NaNs.
+        '''
+        comp_copy = comp.copy()
+
+        # Find a baseline price for each forecast.
         # The price at the beginning of the forecast period is needed to determine direction.
-        # Shifting the full log-transformed price series produces the price.
-        # The start date for a prediction made for 't' is 't - forecast_horizon'.        
-        start_values = history.shift(forecast_horizon)
-        # Add the starting prices to the results dataframe, aligning by index.
-        Y['start_value'] = start_values
-        # Drop any rows where a start price cannot be obtained (at the beginning).
-        Y.dropna(inplace=True)
+        baselines = history.shift(forecast_horizon)
+        # Add the baseline prices to the comp DataFrame, aligning by index.
+        comp_copy['baseline'] = baselines
+        # Drop any rows where a baseline price cannot be obtained (at the beginning).
+        comp_copy.dropna(inplace=True)
 
-        if Y.empty:
+        if comp_copy.empty:
             return 0.0
 
-        # Determine the true and predicted directions.
-        # A direction is positive (1) if the price went up, and negative (-1) if it went down.
-        Y['true_direction'] = np.sign(Y['true_value'] - Y['start_value'])
-        Y['pred_direction'] = np.sign(Y['prediction'] - Y['start_value'])
+        comp_copy['true_dir'] = np.sign(comp_copy['true'] - comp_copy['baseline'])
+        comp_copy['pred_dir'] = np.sign(comp_copy['pred'] - comp_copy['baseline'])
         
-        # Compare the directions.
-        # The prediction is correct if the signs are the same (e.g., both positive or both negative).
-        correct_preds = (Y['true_direction'] == Y['pred_direction']).sum()
+        correct_preds = (comp_copy['true_dir'] == comp_copy['pred_dir']).sum()
 
-        return correct_preds / len(Y) * 100
+        return correct_preds / len(comp_copy) * 100
     
     def fit(self):
         '''
-        Fits the ARIMA model on the entire training dataset.
-        The fitted model is stored in the `self.model_fit` attribute.
+        Placeholder for API consistency. No fitting required.
         '''
         if self.use_tqdm == False:
             print(f'--- Fitting ARIMA{self.order} Model ---')
+        pass
 
-        x_train = self.X_train[self.target_col]
-        x_train_transformed = np.log(x_train)
-
-        with catch_warnings():
-            filterwarnings('ignore')
-            model = ARIMA(x_train_transformed, order=self.order)
-            model_fit = model.fit()
-
-    def evaluate(self, forecast_horizon, refit_interval):
+    def evaluate(self, forecast_horizon):
         '''
-        Performs walk-forward validation on the validation set to evaluate performance.
+        Performs walk-forward validation using a rolling window, fixed parameters,
+        and direct forecasting.
 
-        This method iteratively trains on a growing history of data to predict 
-        future points in the validation set.
+        This method trains the model once on the initial training data to get
+        a fixed set of parameters. It then iterates through the validation set,
+        moving a fixed-size window of data one step at a time (rolling window).
+
+        At each step, it applies the original, fixed parameters to the new window
+        of data to directly forecast 'forecast_horizon' steps into the future.
 
         Args:
-            forecast_horizon (int): How many steps ahead to forecast.
-            refit_interval (int): How often to re-fit the model.
+            forecast_horizon (int): The number of steps to forecast.
 
         Returns:
-            dict: A dictionary containing performance metrics (MAPE, DA) and the model order.
+            dict: A dictionary containing performance metrics (`mape`, `da`), a model order, 
+                and a comparison DataFrame (`comp`) with the actual vs. predicted values.
         '''
         if self.use_tqdm == False:
             print(f'\n--- Evaluating ARIMA{self.order} Model ---')
 
-        # Log transformation stabilizes the variance.
-        # Differencing stabilizes the mean by removing or reducing the trend and seasonality.
-        x_train = self.X_train[self.target_col]
-        x_valid = self.X_valid[self.target_col]
+        train_ds = self.train_ds[self.target_col]
+        valid_ds = self.valid_ds[self.target_col]
 
-        x_train_transformed = np.log(x_train)
-        x_valid_transformed = np.log(x_valid)
+        train_ds_transformed = np.log(train_ds)
+        valid_ds_transformed = np.log(valid_ds)
         
-        history = list(x_train_transformed)
-        y_preds = list()
-        y_trues = list()
+        full_history_transformed = list(train_ds_transformed)
+        preds = list()
+        trues = list()
 
-        # The loop should only go up to the point where the last forecast has a corresponding true value.
-        loop_end = len(x_valid_transformed) - forecast_horizon
+        loop_end = len(valid_ds_transformed) - forecast_horizon
+        history_transformed = list(train_ds_transformed[-self.window_size:])
+
+        with catch_warnings():
+            filterwarnings('ignore')
+            model = ARIMA(full_history_transformed, order=self.order)
+            model_fit = model.fit()
+            params = model_fit.params
         
         for t in range(loop_end):
-            # Re-fit the model at the specified interval.
-            if t % refit_interval == 0:
-                # Suppress convergence warnings to keep the output clean.            
-                with catch_warnings():
-                    filterwarnings('ignore')
-                    model = ARIMA(history, order=self.order)
-                    model_fit = model.fit()
-            
-            # Forecast and inverse-transform.
-            # The .forecast() method automatically handles un-differencing.
-            # The validation set starts a day after the last day of the training set.
-            # The forecast has to cover the period up to the first day of the validation set.
-            # 1 has to be added to the forecast horizon variable.      
-            y_pred_transformed = model_fit.forecast(steps=forecast_horizon + 1)
-            y_pred = self._inverse_transform(y_pred_transformed[-1])
-            y_preds.append(y_pred)
+            # Apply the initial parameters to the current data window without refitting.           
+            model = ARIMA(history_transformed, order=self.order)
+            model_fit = model.filter(params)
+
+            # The validation dataset starts a day after the last day of the training dataset.
+            # The forecast has to cover the period up to the first day of the validation dataset.
+            # 1 has to be added to the forecast horizon variable.
+            pred_transformed = model_fit.forecast(steps=forecast_horizon + 1)[-1]
+            pred = np.exp(pred_transformed)
+            preds.append(pred)
             
             # Get the corresponding true value (already in original scale).
-            y_true = x_valid.iloc[t + forecast_horizon]
-            y_trues.append(y_true)
+            true = valid_ds.iloc[t + forecast_horizon]
+            trues.append(true)
             
-            # Update history with the transformed value from the validation set.
-            history.append(x_valid_transformed.iloc[t])
+            # Update the history using a rolling window.
+            history_transformed.append(valid_ds_transformed.iloc[t])
+            history_transformed.pop(0)
 
-        Y_results = pd.DataFrame({
-            'true_value': y_trues,
-            'prediction': y_preds
-        }, index=self.X_valid.index[forecast_horizon:]) # The index starts from the first date that has a true value.
+        comp = pd.DataFrame({
+            'true': trues,
+            'pred': preds
+        }, index=self.valid_ds.index[forecast_horizon:]) # The index starts from the first date that has a true value.
 
-        y_true = Y_results['true_value']
-        y_pred = Y_results['prediction']
+        true = comp['true']
+        pred = comp['pred']
 
-        mape = mean_absolute_percentage_error(y_true, y_pred) * 100
-        # Combine train and validation data to get a full history for lookback.
-        history = pd.concat([x_train, x_valid])
-        da = self._calculate_da(Y_results, history, forecast_horizon)
+        mape = self._calculate_mape(true, pred)
+        history = pd.concat([train_ds, valid_ds])
+        da = self._calculate_da(comp, history, forecast_horizon)
 
         if self.use_tqdm == True:
-            tqdm.write(f'Order: {self.order}, MAPE: {mape:.4f}%, DA: {da:.4f}%')
+            tqdm.write(f' Order: {self.order}, MAPE: {mape:.4f}%, DA: {da:.4f}%')
         else:
             print(f'- Order: {self.order}')
             print(f'- Mean Absolute Percentage Error (MAPE): {mape:.4f}%')
@@ -152,38 +173,61 @@ class ARIMAForecaster(BaseForecaster):
             'order': self.order,
             'mape': mape,
             'da': da,
-            'forecast_comparison': Y_results
+            'comp': comp
         }
     
-    def predict(self, forecast_horizon):
+    def predict(self, forecast_horizon, hold_thld=None):
         '''
-        Trains a final model on all available data (train + valid) and 
-        generates a forecast for the actual future.
+        Trains a final model on all available history to forecast 
+        a single future value and its corresponding directional signal.
 
         Args:
-            forecast_horizon (int): The number of steps to forecast into the future.
+            forecast_horizon (int): The number of steps to forecast.
+            hold_thld (float, optional): The percentage threshold for the hold signal.
 
         Returns:
-            pd.DataFrame: A DataFrame containing the future forecast with dates.
+            dict: A dictionary containing the following keys:
+                - pred (float): The single, predicted value for the date
+                                 `forecast_horizon` steps after the last known data point.
+                - sig (float): The sign of the directional signal 
+                                 (1.0 for up, -1.0 for down, 0.0 for hold).
         '''
-        print(f'\n--- Generating Final ARIMA{self.order} Forecast ---')
+        thld = self.hold_thld if hold_thld is None else hold_thld
 
-        history = pd.concat([self.X_train[self.target_col], self.X_valid[self.target_col]])
+        print(f'\n--- Generating Final ARIMA{self.order} (Threshold: {thld * 100}%) Forecast ---')
+
+        history = pd.concat([self.train_ds[self.target_col], self.valid_ds[self.target_col]])
         history_transformed = np.log(history)
+
+        last_value = history.iloc[-1]
 
         with catch_warnings():
             filterwarnings('ignore')
             model = ARIMA(history_transformed, order=self.order)
             model_fit = model.fit()
 
-        y_pred_transformed = model_fit.forecast(steps=forecast_horizon)
-        y_pred = self._inverse_transform(y_pred_transformed.iloc[-1])
+        pred_transformed = model_fit.forecast(steps=forecast_horizon).iloc[-1]
+        pred = np.exp(pred_transformed)
+
+        if last_value == 0:
+            diff = pred - last_value
+            sig = np.sign(diff)
+        else:
+            pct_change = (pred - last_value) / last_value
+            
+            if pct_change > thld:
+                sig = 1.0
+            elif pct_change < -thld:
+                sig = -1.0
+            else:
+                sig = 0.0
 
         last_time = history.index[-1]
-        freq = history.index.freqstr
+        freq = pd.infer_freq(history.index)
         future_time = pd.date_range(start=last_time, periods=forecast_horizon + 1, freq=freq)[-1]
         formatted_future_time = future_time.date().strftime('%Y-%m-%d')
 
-        print(f'- Forecast for {formatted_future_time}: ${y_pred:.2f}')
-
-        return y_pred
+        print(f'- Forecast for {formatted_future_time}: ${pred:.2f}')
+        print(f'- Directional Signal for {formatted_future_time}: {sig:.1f}')
+        
+        return {'pred': pred, 'sig': sig}

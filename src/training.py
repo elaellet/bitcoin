@@ -1,11 +1,13 @@
 import keras_tuner as kt
+import optuna
 import tensorflow as tf
 import tqdm
+import xgboost as xgb
 from tqdm import tqdm
 
 from .models.arima import ARIMAForecaster
 
-def select_best_model(results, naive_metrics, model_type):
+def select_best_model(tuning_results, naive_metrics, model_type):
     '''
     Selects the best model of a specific type based on performance against a naive model.
 
@@ -16,42 +18,46 @@ def select_best_model(results, naive_metrics, model_type):
     4. If there's a tie in DA, choose the one with the lowest MAPE.
 
     Args:
-        results (list): A list of metrics from the grid search/hyperparameter tuning.
+        tuning_results (list): A list of metrics from the hyperparameter tuning.
         naive_metrics (dict): The performance dictionary of the naive model.
-        model_type (str): The type of model being selected (e.g., 'ARIMA', 'LSTM').
+        model_type (str): The type of model being selected (e.g., `ARIMA`, `LSTM`).
 
     Returns:
-        The dictionary of the best performing model, or None if none outperform the naive model.
+        tuple[dict, bool]: A tuple containing:
+            - The metrics dictionary for the best model found.
+            - A boolean flag, `True` if the best model outperformed the
+              MAPE of naive baseline, otherwise `False`.
     '''
     model_type_upper = model_type.upper()
+    beats_naive = False
 
     print(f'\n--- Selecting Best {model_type_upper} Model ---')
-    if not results:
-        print('No successful model results to evaluate.')
-        return None
+    if not tuning_results:
+        print('- No successful tuning results to evaluate.')
+        return (None, beats_naive)
 
     naive_mape = naive_metrics['mape']
     naive_da = naive_metrics['da']
 
-    print(f'- Naive Model Benchmark: MAPE: {naive_mape:.4f}%, DA: {naive_da:.4f}%')
+    print(f'- Naive Model Benchmark → MAPE: {naive_mape:.4f}%, DA: {naive_da:.4f}%')
     
     candidates = [
-        result for result in results 
+        result for result in tuning_results 
         if result['mape'] < naive_mape and result['da'] > naive_da
     ]
 
     if not candidates:
-        print(f'\nConclusion: No {model_type_upper} model outperformed the naive model.')
-        return None
+        print(f'\n- Conclusion: No {model_type_upper} model outperformed the naive model.')
+        return (None, beats_naive)
 
-    print(f'\nFound {len(candidates)} candidate model(s) that beat the naive model:')
+    print(f'\n- Found {len(candidates)} candidate model(s) that beat the naive model:')
     for model in candidates:
          identifier = model.get('order', 'hyperparameters')
          print(f'- Model: {identifier}, MAPE: {model["mape"]:.4f}%, DA: {model["da"]:.4f}%')
 
-    # Sort by DA (decreasing), then by MAPE (ascending) to break ties.
     candidates.sort(key=lambda x: (-x['da'], x['mape']))
     best_model = candidates[0]
+    beats_naive = True
 
     print(f'\n--- Best {model_type_upper} Model Chosen ---')
     if model_type_upper == 'ARIMA':
@@ -59,10 +65,20 @@ def select_best_model(results, naive_metrics, model_type):
     print(f'- MAPE: {best_model["mape"]:.4f}%')
     print(f'- DA: {best_model["da"]:.4f}%')
 
-    return best_model
+    return (best_model, beats_naive)
 
 def generate_arima_orders(p_values, d_values, q_values):
-    '''Generates a list of all possible (p, d, q) order combinations for ARIMA.'''    
+    '''
+    Generates a list of all possible (p, d, q) order combinations for ARIMA.
+
+    Args:
+        p_values (int): A list of p values.
+        d_values (int): A list of d values.
+        q_values (int): A list of q values.
+
+    Returns:
+        list: A list of (p, d, q) order combinations.
+    '''    
     orders = list()
     for p in p_values:
         for d in d_values:
@@ -71,41 +87,42 @@ def generate_arima_orders(p_values, d_values, q_values):
 
     return orders
 
-def run_arima_grid_search(X_train, X_valid, 
+def run_arima_grid_search(train_ds, valid_ds, 
                           target_col, orders, 
-                          forecast_horizon, refit_interval):
+                          window_size, forecast_horizon):
     '''
-    Performs a grid search over ARIMA orders using walk-forward validation.
+    Performs a grid search over ARIMA orders using walk-forward validation 
+    (rolling window, fixed parameters, and direct forecasting).
 
     Args:
-        X_train: The training dataset.
-        X_valid: The validation dataset.
-        target_col: The name of the target column to forecast.
+        train_ds: The training dataset.
+        valid_ds: The validation dataset.
+        target_col: The name of the column to forecast.
         orders: A list of (p, d, q) tuples to test.
-        forecast_horizon: The number of steps to forecast ahead.
-        refit_interval: How often to re-fit the ARIMA model.
+        forecast_horizon (int): The number of steps to forecast.
 
     Returns:
-        list: A list of dictionaries, where each dictionary contains the results for one order.
+        list: A list of dictionaries, where each dictionary contains
+            the performance metrics for one order.
     ''' 
     print(f'Starting ARIMA grid search for {len(orders)} combinations...\n')
     all_metrics = list()
 
-    for order in tqdm(orders, desc='ARIMA Grid Search Progress'):
+    for order in tqdm(orders, desc='ARIMA Grid Search'):
         try:
-            model = ARIMAForecaster(X_train, X_valid, target_col, order, True)
+            model = ARIMAForecaster(train_ds, valid_ds, target_col, 
+                                    window_size, order, True)
             model.fit()
-            metrics = model.evaluate(forecast_horizon, refit_interval)
+            metrics = model.evaluate(forecast_horizon)
             
             if metrics is not None:
                 all_metrics.append(metrics)
 
         except Exception as e:
-            # Catch any unexpected errors during model fitting.
             print(f'ARIMA{order} with error: {e}. Skipping.')
             continue
-    
-    all_metrics.sort(key=lambda x: x['mape'])
+
+    all_metrics.sort(key=lambda x: (-x['da'], x['mape']))
     print('\nARIMA grid search complete.')
     
     return all_metrics
@@ -115,14 +132,12 @@ class RNNHyperModel(kt.HyperModel):
     A Keras Tuner HyperModel for building and tuning sequence-to-sequence
     time series forecasters. It is initialized with a specific RNN type.
     '''
-    def __init__(self, n_features, target_window,
-                 rnn_type, strategy='direct'):
-        self.n_features = n_features
+    def __init__(self, n_cols, target_window, rnn_type):
+        self.n_cols = n_cols
         self.target_window = target_window
         if rnn_type.lower() not in ['lstm', 'gru']:
             raise ValueError('rnn_type must be "lstm" or "gru"')
         self.rnn_type = rnn_type.lower()
-        self.strategy = strategy
 
     def build(self, hp):
         '''Builds a compiled Keras model with tunable hyperparameters.'''
@@ -135,7 +150,7 @@ class RNNHyperModel(kt.HyperModel):
         use_l2 = hp.Boolean('use_l2')
         # It tells the tuner to search the exponents evenly, so it spends just as much effort exploring values between 0.0001 and 0.001 as it does between 0.001 and 0.01.
         l2_rate = hp.Float('l2_rate', min_value=1e-4, max_value=1e-2, sampling='log', parent_name='use_l2', parent_values=[True]) if use_l2 else 0.0
-        dropout_rate = hp.Float('dropout_rate', min_value=0.0, max_value=0.5, step=0.1)
+        dropout = hp.Float('dropout', min_value=0.0, max_value=0.5, step=0.1)
 
         # Compile Hyperparameters.
         learning_rate = hp.Float('learning_rate', min_value=1e-4, max_value=1e-2, sampling='log')
@@ -148,7 +163,7 @@ class RNNHyperModel(kt.HyperModel):
         clipnorm = hp.Float('clipnorm', min_value=0.5, max_value=1.5, step=0.1)
 
         model = tf.keras.Sequential()
-        model.add(tf.keras.layers.Input(shape=(None, self.n_features)))
+        model.add(tf.keras.layers.Input(shape=(None, self.n_cols)))
 
         for i in range(n_conv_layers):
             # 1D convolutional layer acts as a pre-processor.
@@ -180,20 +195,17 @@ class RNNHyperModel(kt.HyperModel):
                 kernel_regularizer=tf.keras.regularizers.l2(l2_rate),
                 # Recurrent dropout randomly drops connections within the recurrent cell. It uses the same dropout mask for every time step in a given sequence. 
                 # This prevents overfitting on the time-dependent connections without causing the model to forget what it just saw.
-                recurrent_dropout=dropout_rate
+                recurrent_dropout=dropout
             ))
+            # TODO: Custom LN?
             model.add(tf.keras.layers.LayerNormalization())
 
          # Add dropout before the final dense layer.
-        if dropout_rate > 0:
-            model.add(tf.keras.layers.Dropout(dropout_rate))
+        if dropout > 0:
+            model.add(tf.keras.layers.Dropout(dropout))
 
-        if self.strategy == 'direct':
-            # For monthly forecast, predict the full target window.
-            model.add(tf.keras.layers.Dense(self.target_window))
-        else:
-            # For yearly forecast, predict only one step ahead.
-            model.add(tf.keras.layers.Dense(1))
+        # Predict the full target window.
+        model.add(tf.keras.layers.Dense(self.target_window))
 
         if optimizer == 'adam':
             optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, clipnorm=clipnorm)
@@ -211,8 +223,8 @@ class RNNHyperModel(kt.HyperModel):
     #     # Pass the selected batch size to the original model.fit().
     #     return model.fit(*args, batch_size=batch_size, **kwargs)
 
-def tune_rnn_forecaster(train_set, valid_set, 
-                        rnn_type, n_features, 
+def tune_rnn_forecaster(train_ds, valid_ds,
+                        rnn_type, n_cols,
                         target_window, 
                         train_steps, valid_steps,
                         max_trials=15):
@@ -220,22 +232,22 @@ def tune_rnn_forecaster(train_set, valid_set,
     Runs Keras Tuner to find the best hyperparameters for an RNN-based forecaster.
 
     Args:
-        train_set: The windowed training dataset.
-        valid_set: The windowed validation dataset.
+        train_ds: The windowed training dataset.
+        valid_ds: The windowed validation dataset.
         rnn_type: The type of RNN cell to use ('lstm' or 'gru').
-        n_features: The number of input features.
+        n_cols: The number of input features.
         target_window: The number of steps to forecast.
         train_steps (int): The number of batches per training epoch.
-        valid_steps (int): The number of batches per validation epoch.        
+        valid_steps (int): The number of batches per validation epoch.
         max_trials: The number of hyperparameter combinations to test.
 
     Returns:
         The best set of hyperparameters found by the tuner.
     '''
     hypermodel = RNNHyperModel(
-        n_features,
+        n_cols,
         target_window,
-        rnn_type
+        rnn_type,
     )
     
     # Bayesian optimization is the most efficient with number of trials. 
@@ -254,8 +266,7 @@ def tune_rnn_forecaster(train_set, valid_set,
         overwrite=True
     )
 
-    # TODO: Custom metric function (MAPE DA)?
-    # TODO: val_loss vs. val_mae?
+    # TODO: Custom MAPE?
     early_stopping_cb = tf.keras.callbacks.EarlyStopping(monitor='val_mae', patience=10, verbose=1)
     # A dynamic scheduler can significantly improve performance.
     # ReduceLROnPlateau reduces the learning rate automatically when the validation loss stops improving.
@@ -263,11 +274,11 @@ def tune_rnn_forecaster(train_set, valid_set,
     lr_scheduler_cb = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_mae', factor=0.5, patience=5)
 
     rnn_type_upper = rnn_type.upper()
-    print(f'\nStarting hyperparameter search for {rnn_type_upper} model...')
+    print(f'\nStarting hyperparameter tuning for {rnn_type_upper} model...')
     tuner.search(
-        train_set,
+        train_ds,
         epochs=30,
-        validation_data=valid_set,
+        validation_data=valid_ds,
         steps_per_epoch=train_steps,
         validation_steps=valid_steps,
         callbacks=[early_stopping_cb, lr_scheduler_cb]
@@ -280,3 +291,114 @@ def tune_rnn_forecaster(train_set, valid_set,
     print()
     
     return best_hps
+
+def tune_xgb_forecaster(model, forecast_horizon, n_trials=15, early_stopping_rounds=20):
+    '''
+    Performs hyperparameter tuning for the XGBoostForecaster using Optuna.
+
+    This function defines an `objective` for Optuna to minimize. This
+    objective function specifies the hyperparameter search space (e.g.,
+    `learning_rate`, `max_depth`).
+
+    For each of the `n_trials`, Optuna selects a new combination of
+    hyperparameters, trains a model, and evaluates it against the
+    validation set. It uses the MAE as the metric to optimize, 
+    ensuring a fair comparison.
+
+    Crucially, this entire tuning process is run for only one representative
+    forecast horizon (specified by `forecast_horizon`). The
+    assumption is that the best parameters found for this single horizon
+    will be strong performers for all other horizons as well.
+
+    Args:
+        model (XGBoostForecaster): An initialized instance of the
+            XGBoostForecaster class. The function will call
+            `_prepare_data()` if it hasn't been run.
+        forecast_horizon (int): The single, specific forecast
+            horizon (e.g., 7) to use for the optimization process.
+        n_trials (int): The total number of hyperparameter combinations
+            (trials) for Optuna to test.
+        early_stopping_rounds (int): Patience for early stopping.
+
+    Returns:
+        dict: A dictionary of the best hyperparameters found by the
+            optimization study.
+
+    Raises:
+        ValueError: If the provided 'forecast_horizon' is not
+            within the valid range (1 to `target_window`).
+    '''    
+    if not model.X_train or not model.X_valid:
+        model._prepare_data()
+
+    try:
+        idx = forecast_horizon - 1
+        X_train = model.X_train[idx]
+        y_train = model.y_train[idx]
+        X_valid = model.X_valid[idx]
+        y_valid = model.y_valid[idx]
+    except IndexError:
+        raise ValueError(f'Invalid forecast_horizon. Must be between 1 and {model.target_window}')
+    
+    def obj(trial):
+        # TODO: custom eval_metric?
+        params = {
+            'n_estimators': 1000,
+            # max_depth directly controls the complexity of each tree. 
+            # Deeper trees can capture more complex patterns but are much more likely to overfit.
+            'max_depth': trial.suggest_int('max_depth', 3, 10),
+            # learning_rate controls the influence of each new tree. 
+            # A smaller learning rate (like 0.01) is more robust but requires more trees.
+            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+            'objective': 'reg:pseudohubererror',
+            'n_jobs': -1,
+            # min_child_weight stops the tree from splitting on tiny, noisy groups of data.
+            'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+            # subsample tells each tree to use only a fraction of the training data (e.g., 80%).
+            # This randomness prevents the model from becoming too reliant on a few specific training samples (outliers) and improves generalization.
+            'subsample': trial.suggest_float('subsample', 0.7, 1.0),
+            # colsample_bytree tells each tree to use only a fraction of the features (e.g., 70% of 20 features). 
+            # This is incredibly useful for high-dimensional data, 
+            # as it forces the model to find different paths to a solution instead of always relying on the same few "super" features.
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 1.0),
+            # reg_alpha: L1 regularization
+            'reg_alpha': trial.suggest_float('reg_alpha', 1e-5, 1.0, log=True),
+            # reg_lambda L2 regularization
+            'reg_lambda': trial.suggest_float('reg_lambda', 1e-5, 1.0, log=True),            
+            'random_state': 42,
+            'eval_metric': 'mae',
+            'early_stopping_rounds': early_stopping_rounds
+        }
+
+        # TODO: custom metric?
+        pruning_cb = optuna.integration.XGBoostPruningCallback(trial, 'validation_0-mae')
+
+        xxgb = xgb.XGBRegressor(**params, callbacks=[pruning_cb])
+
+        xxgb.fit(
+            X_train, y_train,
+            eval_set=[(X_valid, y_valid)],
+            verbose=False            
+        )
+
+        best_score = xxgb.best_score
+        return best_score
+    
+    sampler = optuna.samplers.TPESampler(seed=42)
+    study = optuna.create_study(direction='minimize', sampler=sampler, pruner=optuna.pruners.MedianPruner())
+
+    print(f'\nStarting hyperparameter tuning for XGBoost model...')
+
+    study.optimize(obj, n_trials=n_trials)
+
+    print(f'Best MAE: {study.best_value:.4f}')
+    print(f'\nXGBoost hyperparameter tuning complete:')
+
+    best_params = study.best_params
+    best_params['n_estimators'] = 1000
+
+    for param, value in best_params.items():
+        print(f'- {param}: {value}')
+    print()
+    
+    return best_params

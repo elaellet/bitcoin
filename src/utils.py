@@ -1,13 +1,8 @@
 import hashlib
-import shutil
 from pathlib import Path
 
 import pandas as pd
-from finta import TA
-#import pickle
-
-# TODO: How to disable during executable file creation?
-#from google.colab import files
+import yaml
 
 def print_header(title):
     '''
@@ -21,139 +16,109 @@ def print_header(title):
     print(f'= {title} =')
     print(f'{header_line}')
 
-def compute_sha256(path):
+def manage_checksum(file_path, metadata_dir, main_log_path, verify=False):
     '''
-    Computes the SHA256 hash of a file.
+    Generates, verifies, and logs SHA-256 checksums for a given file.
 
-    This function reads the file in binary chunks, making it memory-efficient
-    for files of any size.
+    This function replicates the functionality of the following shell commands:
+    1. sha256sum [file] > [checksum_file]  (Generation)
+    2. sha256sum [file] | diff - [checksum_file] (Verification)
+    3. echo "[file]: $(sha256sum [file] | cut -d' ' -f 1)" >> [main_log_path] (Logging)
 
     Args:
-        path (str or pathlib.Path): The path to the file.
+        file_path (str or pathlib.Path): The full path to the file to be processed.
+        metadata_dir (str or pathlib.Path): Directory to store individual checksum files.
+        main_log_path (str or pathlib.Path): The full path to a main log file to append results.
+                                        If provided in generation mode, the checksum is appended.
+        verify (bool, optional): If True, verifies the file against its existing
+                                 checksum file instead of generating a new one.
+                                 Defaults to False.
 
     Returns:
-        str: The hexadecimal representation of the computed SHA256 hash, None if the file was not found.   
-    '''
-    print(f'\nCalculating hash for: {path.name}...')
+        tuple: A tuple containing (bool, str).
+               - The boolean is True for success (generation or successful verification)
+                 and False for a verification failure.
+               - The string is the calculated SHA-256 checksum of the file.
 
-    path = Path(path)
+    Raises:
+        FileNotFoundError: If the specified file_path does not exist.
+    '''
+    file_path = Path(file_path)
+
+    if not file_path.is_file():
+        raise FileNotFoundError(f'Error: The file was not found at \'{file_path}\'')
+
     sha256_hash = hashlib.sha256()
-    chunk_size = 8192
-    
-    try:
-        with path.open('rb') as f:
-            while chunk := f.read(chunk_size):
-                sha256_hash.update(chunk)
+    with open(file_path, 'rb') as f:
+        for byte_block in iter(lambda: f.read(4096), b''):
+            sha256_hash.update(byte_block)
 
-        print('Hash computed successfully.')
-        return sha256_hash.hexdigest()
-    
-    except FileNotFoundError:
-        print(f'Error: The file was not found at {path}. Cannot perform computation.')
-        return None
-    
-def validate_sha256(path):
-    '''
-    Validates a file's integrity by comparing its SHA256 hash against a known value.
+    curr_checksum = sha256_hash.hexdigest()
 
-    Args:
-        path (str or pathlib.Path): The path to the file to validate.
+    metadata_dir = Path(metadata_dir)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    Returns:
-        bool: True if the hashes match, False otherwise.
-    '''
-    path = Path(path)
-    ACTUAL_HASH = '2b04e4c6df4328017d586a2972e243a83b06e23144d558c92295e905837788bb'
-    computed_hash = compute_sha256(path)
+    indiv_checksum_path = metadata_dir / f'{file_path.stem}.txt'
 
-    print(f'\nValidating hashes for: {path.name}...')
-  
-    if computed_hash == ACTUAL_HASH:
-        print('Data integrity check passed.')
-        return True
+    if verify:
+        if not indiv_checksum_path.exists():
+            print(f'Verification failed: Checksum file not found at \'{indiv_checksum_path}\'')
+            return False, curr_checksum
+
+        saved_checksum = indiv_checksum_path.read_text().split()[0]
+        if curr_checksum == saved_checksum:
+            print(f'Verification successful for \'{file_path.name}\': OK')
+            return True, curr_checksum
+        else:
+            print(f'Verification failed for \'{file_path.name}\':')
+            print(f'- Current:  {curr_checksum}')
+            print(f'- Expected: {saved_checksum}')
+            return False, curr_checksum
     else:
-        print('--- !!! DATA VALIDATION FAILED !!! ---')
-        print(f'Error: Hashes mismatch for {path.name}. The file may be corrupt or modified.')
-        print(f'Expected: {ACTUAL_HASH}')
-        print(f'Got:      {computed_hash}')
-        return False
-
-def verify_and_log_checksum(
-    src_path,
-    dest_path,
-    checksum_log_path
-):
-    """
-    Verifies that two files are identical by comparing their SHA-256 hashes
-    and logs the checksum to a file.
-
-    Args:
-        src_path: The path to the original file.
-        dest_path: The path to the copied or destination file.
-        checksum_log_path: The path to the file where the checksum will be logged.
-    """
-    print(f'Computing hash for source file: {src_path.name}...')
-    src_hash = compute_sha256(src_path)
-    if not src_hash:
-        print('Could not compute hash for source file. Aborting.')
-        return
-
-    print(f'Computing hash for destination file: {dest_path.name}...')
-    dest_hash = compute_sha256(dest_path)
-    if not dest_hash:
-        print('Could not compute hash for destination file. Aborting.')
-        return
+        main_log_path = Path(main_log_path)
         
-    print('\nComparing hashes...')
-    assert src_hash == dest_hash, f'Data corrupted. Hashes do not match:\nSource: {src_hash}\nDestination: {dest_hash}'
-    
-    print('Hashes match. Data integrity verified.')
+        if main_log_path.is_file():
+            with open(main_log_path, 'r') as f:
+                if curr_checksum in f.read():
+                    print(f'Checksum \'{curr_checksum}\' already exists in main log. Skipping file writes.')
+                    return True, curr_checksum        
 
-    try:
-        checksum_log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(checksum_log_path, 'a') as f:
-            f.write(f'{dest_path.name}: {dest_hash}\n')
-        
-        print(f'\nSuccessfully appended checksum to {checksum_log_path}')
-    except Exception as e:
-        print(f'\nFailed to write to checksum file: {e}')
+        indiv_checksum_path.write_text(f'{curr_checksum}  {file_path.name}\n')
+        print(f'Checksum for \'{file_path.name}\' saved to: \'{indiv_checksum_path}\'')
 
-def setup_dataset(path):
+        with open(main_log_path, 'a') as f:
+            f.write(f'{file_path.name}: {curr_checksum}\n')
+        print(f'Appended checksum to main log: \'{main_log_path}\'')
+        
+        return True, curr_checksum
+
+def save_ds(path, ds):
     '''
-    Checks if a dataset file exists and prompts for upload if it doesn't.
+    Saves content to a specified file path.
 
-    This function ensures the parent directory for the given file path exists.
-    If the file is not found, it initiates a file upload process.
+    This function ensures the parent directory for the given file path exists
+    and then writes the provided content to the file, overwriting it if it
+    already exists.
 
     Args:
+        ds (pd.DataFrame): The Pandas DataFrame to be saved.
         path (str or pathlib.Path): The path to the dataset file.
     '''
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if path.exists():
-        print(f'Dataset already exists at \'{path}\'.')
-        return
-
-    expected_filename = path.name
-    print(f'Dataset not found at \'{path}\'.')
-    print(f'Please upload the \'{expected_filename}\' file.')
-
     try:
-        uploaded = files.upload()
+        path = Path(path)    
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-        if not uploaded:
-            print('Upload cancelled. No file was received.')
+        if path.exists():
+            print(f'The dataset already exists at \'{path}\'.')
             return
 
-        uploaded_filename = list(uploaded.keys())[0]
+        ds.to_csv(path, index=False)
 
-        shutil.move(uploaded_filename, path)
-        print(f'Successfully saved dataset to \'{path}\'.')
-
+        print(f'Successfully saved the dataset to \'{path}\'.')
+           
     except Exception as e:
-        print(f'An error occurred: {e}')
-
+        print(f'An error occurred while saving the file: {e}')
+        
 def create_gitignore(path='./.gitignore'):
     '''
     Creates a .gitignore file at the specified path with a default set of rules.
@@ -163,169 +128,214 @@ def create_gitignore(path='./.gitignore'):
                                     .gitignore file should be created.
                                     Defaults to './.gitignore' in the current directory.
     '''
-    # Content for the .gitignore file.
     # Using a raw string (r''') to avoid issues with backslashes.
     gitignore_content = r'''
-        # Data and local configs.
-        data/raw/
-        data/cleaned/
+    # Environment and secrets
+.env
 
-        # Jupyter Notebook checkpoints.
-        .ipynb_checkpoints/
+    # Data folders
+    # Commit the structure and metadata, but not the raw/cleaned data files.
+data/raw/
+data/cleaned/
 
-        # Python cache.
-        __pycache__/
-        *.pyc
+    # Python cache and artifacts
+__pycache__/
+*.pyc
+*.pkl
 
-        # Other common files to ignore.
-        *.pkl
-        *.csv
-        .DS_Store
-        .env
+    # Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+    # OS-specific files
+.DS_Store
     '''
 
     try:
         with open(path, 'w') as f:
-            # strip() removes leading/trailing whitespace from the multiline string.
             f.write(gitignore_content.strip())
         print(f'Success: .gitignore file created at \'{path}\'')
     except IOError as e:
         # Handle potential file system errors (e.g., permission denied)
         print(f'Error: Could not create .gitignore file at \'{path}\'.')
         print(f'Reason: {e}')
-
-def create_metadata_file(
-    df,
+        
+def create_metadata_yaml(
+    ds,
     raw_data_path,
-    dataset_path,
-    metadata_output_path,
+    cleaned_data_path,
+    metadata_path,
     checksum,
     timestamp_col='Timestamp',
-    key_variables_notes='- Open/High/Low/Close prices\n- Volume (BTC/USD)\n- Timestamp (Unix epoch)',
+    key_variables_notes='\nOpen/High/Low/Close prices\nVolume (BTC/USD)\nTimestamp (Unix epoch)\n',
     original_source_url='https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data'
 ):
     '''
-    Creates a metadata file from a pandas DataFrame and appends it to a specified file.
+    Appends or creates a central `versions.yaml` file with versioning metadata for a new dataset version.
 
     Args:
-        df (pd.DataFrame): The DataFrame to analyze.
+        ds (pd.DataFrame): The DataFrame to analyze.
         raw_data_path (str or Path): Path to the raw dataset file (e.g., 'data/raw/btc.csv').
-        dataset_path (str or Path): Path to the processed dataset file.
-        metadata_output_path (str or Path): Path to the file where metadata will be appended.
+        cleaned_data_path (str or Path): Path to the processed dataset file.
+        metadata_path (str or Path): Path to the YAML file where metadata will be saved.
         checksum (str): The SHA-256 checksum of the raw data file.
         timestamp_col (str, optional): The name of the timestamp column. Defaults to 'Timestamp'.
         key_variables_notes (str, optional): A string describing the key variables.
         original_source_url (str, optional): The URL of the original data source.
     '''
     try:
-        raw_data_path = Path(raw_data_path)
-        
-        timestamps = pd.to_datetime(df[timestamp_col], unit='s')
-        frozen_date = timestamps.max()
-        time_range_start = timestamps.min()
-        
-        num_rows, num_cols = df.shape
-        
-        col_details = '\n'.join([f'  - {col} ({df[col].dtype})' for col in df.columns])
+        raw_path = Path(raw_data_path)
+        metadata_path = Path(metadata_path)
+        dataset_key = raw_path.stem
 
-        metadata = f'''
-        ## Dataset: {raw_data_path.name}
-        - **Frozen Date**: {frozen_date}
-        - **Time Range**: {time_range_start} to {frozen_date}
-        - **Dimensions**: {num_rows} rows x {num_cols} columns
-        - **Columns**:
-        {col_details}
-        - **Key Variables**:
-        {key_variables_notes}
-        - **Source Path**: {dataset_path}
-        - **Original Source**: Kaggle API ({original_source_url})
-        - **Checksum (SHA-256)**: {checksum}
-        '''
+        # Load existing versions file or create a new dictionary if it doesn't exist.
+        if metadata_path.exists():
+            with open(metadata_path, 'r') as f:
+                all_metadata = yaml.safe_load(f) or {}
+        else:
+            all_metadata = {}        
 
-        with open(metadata_output_path, 'a') as f:
-            f.write(metadata)
-            
-        output_dir = Path(metadata_output_path).parent
-        print(f'Successfully created and appended metadata to \'{output_dir}\'')
+        timestamps = pd.to_datetime(ds[timestamp_col], unit='s')
+        frozen_date = timestamps.max().strftime('%Y-%m-%d %H:%M:%S')
+        time_range_start = timestamps.min().strftime('%Y-%m-%d %H:%M:%S')
+        num_rows, num_cols = ds.shape
+        
+        metadata = {
+            'dataset_name': raw_path.name,
+            'frozen_date': frozen_date,
+            'time_range': {
+                'start': time_range_start,
+                'end': frozen_date
+            },
+            'dimensions': {
+                'rows': num_rows,
+                'columns': num_cols
+            },
+            'columns': {col: str(ds[col].dtype) for col in ds.columns},
+            'key_variables': key_variables_notes,
+            'paths': {
+                'raw_data': str(raw_path),
+                'cleaned_data': str(cleaned_data_path)
+            },
+            'source': {
+                'name': 'Kaggle API',
+                'url': original_source_url
+            },
+            'checksum': {
+                'algorithm': 'SHA-256',
+                'value': checksum
+            }
+        }
+
+        if dataset_key not in all_metadata:
+            all_metadata[dataset_key] = []
+
+        # Check if a version with this checksum already exists.
+        existing_checksums = {
+            version['checksum']['value'] for version in all_metadata[dataset_key]
+        }
+        if checksum in existing_checksums:
+            print(f'Info: Version with checksum {checksum[:7]}... already exists for \'{dataset_key}\'. Skipping.')
+            return
+        
+        all_metadata[dataset_key].append(metadata)
+
+        with open(metadata_path, 'w') as f:
+            yaml.dump(all_metadata, f, sort_keys=False, indent=2)
+
+        print(f'Successfully added new version for \'{dataset_key}\' to \'{metadata_path}\'')
 
     except FileNotFoundError:
-        print(f'Error: The file or directory for output path \'{metadata_output_path}\' was not found.')
+        print(f'Error: The file or directory for the output path \'{metadata_path}\' was not found.')
     except KeyError:
         print(f'Error: Timestamp column \'{timestamp_col}\' not found in the DataFrame.')
     except Exception as e:
         print(f'An unexpected error occurred: {e}')
 
-def process_and_save_dataset(df, output_path, timestamp_col='timestamp', date_col='date'):
+
+def load_config(file_path: str):
     '''
-    Adds a datetime column from a Unix timestamp and saves the DataFrame to a CSV file.
+    Loads a configuration from a YAML file.
 
     Args:
-        df (pd.DataFrame): The input DataFrame to process.
-        output_path (str or Path): The full path where the output CSV file will be saved.
-        timestamp_col (str, optional): The name of the source timestamp column. 
-                                     Defaults to 'timestamp'.
-        date_col (str, optional): The name of the new date column to be created. 
-                                  Defaults to 'date'.
+        file_path (str): The path to the YAML configuration file.
+
+    Returns:
+        dict: The configuration as a Python dictionary.
     '''
     try:
-        df_processed = df.copy()
+        with open(file_path, 'r') as f:
+            config = yaml.safe_load(f)
+        print(f'Configuration successfully loaded from \'{file_path}\'.')
 
-        df_processed[date_col] = pd.to_datetime(df_processed[timestamp_col], unit='s')
-        
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # index=False prevents pandas from writing the DataFrame index as a column.
-        df_processed.to_csv(output_path, index=False)
-        
-        print(f'Successfully processed data and saved to \'{output_path}\'')
-        
-    except KeyError:
-        print(f'Error: Timestamp column \'{timestamp_col}\' not found in the DataFrame.')
-    except Exception as e:
-        print(f'An unexpected error occurred: {e}')
+        return config
+    except FileNotFoundError:
+        print(f'Error: The file \'{file_path}\' was not found.')
+        return {}
+    except yaml.YAMLError as e:
+        print(f'Error parsing YAML file \'{file_path}\': {e}')
+        return {}
 
-
-def add_technical_indicators(df):
+def save_config(data, file_path):
     '''
-    Calculates and adds RSI and MACD technical indicators to the DataFrame.
-    
+    Loads an existing YAML config, updates it with new data, and saves it back.
+    If the file doesn't exist, it creates a new one with the data.
+
     Args:
-        df (pd.DataFrame): DataFrame with 'high', 'low', 'close', and 'volume' columns.
-        
-    Returns:
-        pd.DataFrame: The DataFrame with added indicator columns.
+        data (dict): The dictionary data to add or update.
+        file_path (str): The path to the YAML configuration file.
     '''
-    # Calculate Relative Strength Index (RSI).    
-    #df.ta.rsi(length=14, append=True)
-    df['RSI_14'] = TA.RSI(df, period=14)
+    try:
+        with open(file_path, 'r') as f:
+            config_data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        config_data = {}
 
-    # Calculate Moving Average Convergence Divergence (MACD).
-    # This creates three columns: MACD, MACD_histogram, and MACD_signal.    
-    #df.ta.macd(fast=12, slow=26, signal=9, append=True)
-    # 1. Calculate MACD and store its output in a new DataFrame
-    df_macd = TA.MACD(df, period_fast=12, period_slow=26, signal=9)
-    
-    # 2. Rename the columns of the new DataFrame to match your `indicator_cols` list
-    # The default names are 'MACD' and 'SIGNAL'. We'll make them more specific.
-    df_macd.rename(columns={'MACD': 'MACD_12_26_9', 'SIGNAL': 'MACDs_12_26_9'}, inplace=True)
-    
-    # 3. Join the new MACD DataFrame back to the original DataFrame
-    df = pd.concat([df, df_macd], axis=1)
+    # The .update() method merges the dictionaries.
+    # It will add new keys and overwrite any existing keys.
+    config_data.update(data)
 
-    # 4. Manually calculate the MACD histogram
-    df['MACDh_12_26_9'] = df['MACD_12_26_9'] - df['MACDs_12_26_9']
-    
-    return df
+    try:
+        with open(file_path, 'w') as f:
+            yaml.dump(config_data, f, indent=2, sort_keys=False)
+        print(f'Configuration successfully saved to \'{file_path}\'.')
+    except IOError as e:
+        print(f'Error writing to file \'{file_path}\': {e}')
 
-# def save_best_arima_order(path, best_arima_order):
-#     with open(path, 'wb') as f:
-#         pickle.dump(best_arima_order, f)
+def display_metrics(all_metrics, sort_by='da'):
+    '''
+    Displays MAPE and DA metrics in a neatly formatted, aligned table,
+    sorted by a specific metric.
 
-# def load_best_arima_order(path):
-#     best_arima_order = None
+    Args:
+        all_metrics (dict): A dictionary where keys are model names (str)
+                            and values are metrics dictionaries (dict
+                            containing 'mape' and 'da').
+        sort_by (str): The metric to sort by. Must be 'mape' or 'da'.
+    '''
+    if not all_metrics:
+        print('No metrics to display.')
+        return
 
-#     with open(path, 'rb') as f:
-#         best_arima_order = pickle.load(f)
+    sorted_items = []
+    if sort_by == 'mape':
+        sorted_items = sorted(all_metrics.items(), key=lambda item: item[1]['mape'])
+        print('--- Model Performance (Sorted by MAPE, lower is better) ---')
+    elif sort_by == 'da':
+        sorted_items = sorted(all_metrics.items(), key=lambda item: item[1]['da'], reverse=True)
+        print('--- Model Performance (Sorted by DA, higher is better) ---')
+    else:
+        print(f"Error: Invalid sort_by key. Must be 'mape' or 'da'.")
+        return
 
-#     return best_arima_order
+    max_name_len = max(len(name) for name, _ in sorted_items)
+    if max_name_len < 5:
+        max_name_len = 5
+
+    header_name = 'Model'
+    print(f'\n{header_name:<{max_name_len}} | {"DA":<10} | {"MAPE":<10}')
+    print(f'{"-" * max_name_len}-|------------|------------')
+
+    for name, metrics in sorted_items:
+        mape = metrics['mape']
+        da = metrics['da']
+        print(f'{name:<{max_name_len}} | {da:<9.4f}% | {mape:<9.4f}%')
