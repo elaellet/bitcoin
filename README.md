@@ -163,24 +163,24 @@ Here is the performance of the models on the test dataset:
 | Model               | MAPE (%) | Directional Accuracy (%) | DM Test (vs. Baseline) |
 |---------------------|----------|--------------------------|------------------------|
 | Baseline            | 5.04     | 47.2                     | -                      |
-| ARIMA               | 5.36     | 52.9                     | p-value >= 0.05        |
-| LSTM                | 5.04     | 50.8                     | p-value >= 0.05        |
-| GRU                 | 5.04     | 50.8                     | p-value >= 0.05        |
-| XGB                 | 5.13     | 51.8                     | p-value >= 0.05        |
-| Stacking (LSTM+XGB) | 5.20     | 52.1                     | p-value >= 0.05        |
-| Stacking (GRU+XGB)  | 5.11     | 54.7                     | p-value >= 0.05        |
+| ARIMA               | 5.36     | 52.9                     | p-value $\ge 0.05$     |
+| LSTM                | 5.04     | 50.8                     | p-value $\ge 0.05$     |
+| GRU                 | 5.04     | 50.8                     | p-value $\ge 0.05$     |
+| XGB                 | 5.13     | 51.8                     | p-value $\ge 0.05$     |
+| Stacking (LSTM+XGB) | 5.20     | 52.1                     | p-value $\ge 0.05$     |
+| Stacking (GRU+XGB)  | 5.11     | 54.7                     | p-value $\ge 0.05$     |
 
 ### 🗓️ 1-Month Ahead Forecast Results
 
 | Model               | MAPE (%)  | Directional Accuracy (%) | DM Test (vs. Baseline) |
 |---------------------|---------- |--------------------------|------------------------|
 | Baseline            | 9.84      | 42.3                     | -                      |
-| ARIMA               | 10.31     | 49.0                     | p-value >= 0.05        |
-| LSTM                | 9.84      | 50.3                     | p-value <  0.05        |
-| GRU                 | 9.83      | 50.3                     | p-value <  0.05        |
-| XGB                 | 9.90      | 52.1                     | p-value >=  0.05       |
-| Stacking (LSTM+XGB) | 9.83      | 54.2                     | p-value >= 0.05        |
-| Stacking (GRU+XGB)  | 9.82      | 57.7                     | p-value >= 0.05        |
+| ARIMA               | 10.31     | 49.0                     | p-value $\ge 0.05$     |
+| LSTM                | 9.84      | 50.3                     | p-value $< 0.05$       |
+| GRU                 | 9.83      | 50.3                     | p-value $< 0.05$       |
+| XGB                 | 9.90      | 52.1                     | p-value $\ge 0.05$     |
+| Stacking (LSTM+XGB) | 9.83      | 54.2                     | p-value $\ge 0.05$     |
+| Stacking (GRU+XGB)  | 9.82      | 57.7                     | p-value $\ge 0.05$     |
 
 ### 📊 Diebold-Mariano Test p-value Matrix (1-Week Ahead)
 |                     | Baseline | ARIMA     | LSTM     | GRU      | XGB      | Stacking (LSTM+XGB) | Stacking (GRU+XGB) |
@@ -211,15 +211,15 @@ Here is the performance of the models on the test dataset:
 3. **Baseline Performance**: The `Baseline` model is consistently the worst performer in terms of `Directional Accuracy`, scoring worse than a random guess (50%) at both 1-week (47.2%) and 1-month (42.3%) horizons.
 
 📉 **1-Week Ahead Forecast**
-- **No Significant Improvement**: This is the most critical finding for the 1-week horizon. According to the `DM test`, no model (including the top-performing `Stacking` models) provides a statistically significant improvement in forecast accuracy over the `Baseline` (all `p-values` >= 0.05).
+- **No Significant Improvement**: This is the most critical finding for the 1-week horizon. According to the `DM test`, no model (including the top-performing `Stacking` models) provides a statistically significant improvement in forecast accuracy over the `Baseline` (all `p-values` $\ge 0.05$).
 - **Best vs. Worst Error**: The `Baseline` and `GRU` models are tied for the lowest `MAPE` (5.04%). As noted, the `ARIMA` model has the highest `MAPE` (5.36%). The best-performing `Stacking (GRU+XGB)` model has an `MAPE` of 5.11%.
 
 📈 **1-Month Ahead Forecast**
 - **Statistical Significance Found**: Unlike the 1-week forecast, two models show a statistically significant improvement over the `Baseline`:
-  - `LSTM` (`p-value` < 0.05)
-  - `GRU` (`p-value` < 0.05)
+  - `LSTM` (`p-value` $< 0.05$)
+  - `GRU` (`p-value` $< 0.05$)
 
-🤔 **A Key Contradiction**: A crucial finding is that while the `Stacking (GRU+XGB)` model has the best metrics (lowest `MAPE` and highest `DA`), its improvement over the `Baseline` is not statistically significant (`p-value` >= 0.05). This suggests that, while it performed better on average, its improvement wasn't sufficient to pass the statistical test. In contrast, the standalone `LSTM` and `GRU` models consistently outperformed the `Baseline`.
+🤔 **A Key Contradiction**: A crucial finding is that while the `Stacking (GRU+XGB)` model has the best metrics (lowest `MAPE` and highest `DA`), its improvement over the `Baseline` is not statistically significant (`p-value` $\ge 0.05$). This suggests that, while it performed better on average, its improvement wasn't sufficient to pass the statistical test. In contrast, the standalone `LSTM` and `GRU` models consistently outperformed the `Baseline`.
 
 🧭 **Directional Accuracy (`DA`) vs. Error (`MAPE`)**
 A significant finding is the difference in what the metrics say:
@@ -228,7 +228,7 @@ A significant finding is the difference in what the metrics say:
 - **MAPE**: With the apparent exception of the poorly performing `ARIMA` model, all other models (including the `Baseline`) have very similar error magnitudes (`MAPE`).
 
 ⚠️ **Model Limitation: Residual Analysis**
-- **All Models Fail Diagnostic Checks**: A residual analysis was performed on all models for both forecast horizons. The `Ljung-Box Test` for all models returned a `p-value` < 0.05 (e.g., `p=0.0000`).
+- **All Models Fail Diagnostic Checks**: A residual analysis was performed on all models for both forecast horizons. The `Ljung-Box Test` for all models returned a `p-value` $< 0.05$ (e.g., `p = 0.0000`).
 
 - **Implication**: This result rejects the null hypothesis (that residuals are random and independent). This means there is significant `autocorrelation` left in the errors.
 
